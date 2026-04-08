@@ -1,0 +1,11 @@
+[project]
+name = "logos-news-assistant"
+version = "0.1.0"
+description = "Logos 个人 AI 新闻分析助手 — Demo 原型"
+requires-python = ">=3.11"
+readme = "README.md"
+license = {text = "MIT"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
