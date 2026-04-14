@@ -14,23 +14,15 @@ class QueryRequest(BaseModel):
 
 
 def _get_query_service():
-    """延迟导入以避免循环依赖"""
-    from core.config import AppConfig
-    from core.factory import (
-        create_article_store,
-        create_vector_store,
-        create_llm_client,
-        create_embedding_client,
-    )
+    """从 ConfigManager 获取组件并构建 QueryService"""
+    from core.config_manager import get_config_manager
     from services.query_service import QueryService
 
-    config = AppConfig()
-    article_store = create_article_store(config)
-    vector_store = create_vector_store(config)
-    llm_client = create_llm_client(config)
-    embedding_client = create_embedding_client(config)
-
-    return QueryService(article_store, vector_store, llm_client, embedding_client)
+    mgr = get_config_manager()
+    return QueryService(
+        mgr.article_store, mgr.vector_store,
+        mgr.llm_client, mgr.embedding_client,
+    )
 
 
 @router.post("")

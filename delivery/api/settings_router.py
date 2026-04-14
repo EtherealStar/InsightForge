@@ -35,8 +35,8 @@ def _load_feeds() -> list[dict]:
     if os.path.exists(_FEEDS_CONFIG_PATH):
         with open(_FEEDS_CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    from core.config import AppConfig
-    config = AppConfig()
+    from core.config_manager import get_config_manager
+    config = get_config_manager().config
     return list(config.rss_feeds)
 
 
@@ -118,7 +118,10 @@ def update_schedule(schedule: ScheduleConfig):
     }
     try:
         _write_env_file(updates)
-        return {"status": "ok", "message": "调度配置已保存"}
+        # 热重载调度配置
+        from core.config_manager import get_config_manager
+        get_config_manager().reload()
+        return {"status": "ok", "message": "调度配置已保存并立即生效"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"保存调度配置失败: {e}")
 

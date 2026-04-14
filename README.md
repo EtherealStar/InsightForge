@@ -106,8 +106,7 @@ Logos/
 │   ├── api/         #   FastAPI REST API 路由
 │   ├── server.py    #   FastAPI 服务入口
 │   ├── static/      #   Vue 构建产物（pnpm build 生成）
-│   ├── cli.py       #   CLI 调试工具
-│   └── streamlit_app.py  # Streamlit UI（旧，保留兼容）
+│   └── cli.py       #   CLI 调试工具
 ├── frontend/        # Vue 3 前端源码
 │   ├── src/
 │   │   ├── views/   #   页面组件

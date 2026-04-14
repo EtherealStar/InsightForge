@@ -18,6 +18,8 @@ from delivery.api.settings_router import router as settings_router
 from delivery.api.news_router import router as news_router
 from delivery.api.brief_router import router as brief_router
 from delivery.api.query_router import router as query_router
+from delivery.api.newsapi_router import router as newsapi_router
+from delivery.api.webhook_router import router as webhook_router
 
 app = FastAPI(
     title="Logos — AI 新闻分析助手",
@@ -40,6 +42,8 @@ app.include_router(settings_router)
 app.include_router(news_router)
 app.include_router(brief_router)
 app.include_router(query_router)
+app.include_router(newsapi_router)
+app.include_router(webhook_router)
 
 # 生产模式：挂载 Vue 构建产物
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

@@ -1,5 +1,6 @@
 <template>
-  <aside class="sidebar" :class="{ collapsed: isCollapsed }">
+  <div class="mobile-overlay" v-if="mobileOpen" @click="$emit('closeMobile')" />
+  <aside class="sidebar" :class="{ collapsed: isCollapsed, 'mobile-open': mobileOpen }">
     <div class="sidebar-header">
       <div class="logo">
         <span class="logo-icon">📰</span>
@@ -19,6 +20,7 @@
         :to="item.path"
         class="nav-item"
         :class="{ active: $route.path === item.path }"
+        @click="$emit('closeMobile')"
       >
         <span class="nav-icon">{{ item.icon }}</span>
         <transition name="fade">
@@ -49,13 +51,20 @@
 import { ref, onMounted } from 'vue'
 import { newsApi } from '../api'
 
+defineProps({
+  mobileOpen: { type: Boolean, default: false },
+})
+defineEmits(['closeMobile'])
+
 const isCollapsed = ref(false)
 const stats = ref(null)
 
 const navItems = [
   { path: '/news', icon: '📰', label: '新闻展示' },
   { path: '/briefs', icon: '📋', label: '新闻简报' },
+  { path: '/newsapi', icon: '🌍', label: '在线搜索' },
   { path: '/query', icon: '💬', label: '智能问答' },
+  { path: '/webhook', icon: '🔔', label: '消息推送' },
   { path: '/settings', icon: '⚙️', label: '功能设置' },
   { path: '/config', icon: '🔧', label: 'API 配置' },
 ]
@@ -225,7 +234,23 @@ onMounted(async () => {
 
 @media (max-width: 768px) {
   .sidebar {
-    display: none;
+    z-index: 250;
+    top: 56px;
+    bottom: 0;
+    transform: translateX(-110%);
+    transition: transform 0.2s ease;
+  }
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+  .mobile-overlay {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 56px;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 240;
   }
 }
 </style>

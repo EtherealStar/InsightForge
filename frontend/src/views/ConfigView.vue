@@ -93,6 +93,18 @@
 
       <!-- 其他设置 -->
       <section class="card config-section">
+        <h2>📻 NewsAPI 配置</h2>
+        <p class="section-desc">配置外部在线新闻抓取的 API Key（需在 newsapi.org 注册）</p>
+        <div class="config-fields">
+          <div class="form-group">
+            <label class="form-label">NewsAPI Key</label>
+            <input v-model="config.news_api_key" class="input" type="password" placeholder="输入 NewsAPI Key" />
+          </div>
+        </div>
+      </section>
+
+      <!-- 其他设置 -->
+      <section class="card config-section">
         <h2>📝 其他设置</h2>
         <div class="config-fields">
           <div class="form-group">

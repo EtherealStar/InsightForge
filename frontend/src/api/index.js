@@ -39,11 +39,32 @@ export const newsApi = {
   deleteArticles: (ids) => api.post('/news/batch-delete', { article_ids: ids }),
 }
 
+// ========== NewsAPI ==========
+export const extNewsApi = {
+  searchEverything: (params) => api.get('/newsapi/everything', { params }),
+  searchTopHeadlines: (params) => api.get('/newsapi/top-headlines', { params }),
+  saveArticle: (data) => api.post('/newsapi/save', data),
+}
+
 // ========== 简报 ==========
 export const briefApi = {
   list: () => api.get('/briefs'),
   get: (filename) => api.get(`/briefs/${filename}`),
   generate: () => api.post('/briefs/generate'),
+}
+
+// ========== Webhook 推送 ==========
+export const webhookApi = {
+  getPlatforms: () => api.get('/webhook/platforms'),
+  getChannels: () => api.get('/webhook/channels'),
+  addChannel: (data) => api.post('/webhook/channels', data),
+  updateChannel: (id, data) => api.put(`/webhook/channels/${id}`, data),
+  deleteChannel: (id) => api.delete(`/webhook/channels/${id}`),
+  testChannel: (id) => api.post(`/webhook/channels/${id}/test`),
+  pushAll: () => api.post('/webhook/push'),
+  pushToChannel: (id) => api.post(`/webhook/push/${id}`),
+  getAutoPush: () => api.get('/webhook/auto-push'),
+  setAutoPush: (enabled) => api.put('/webhook/auto-push', { auto_push: enabled }),
 }
 
 // ========== AI 问答 ==========

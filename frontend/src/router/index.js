@@ -18,10 +18,22 @@ const routes = [
     meta: { title: '新闻简报', icon: '📋' },
   },
   {
+    path: '/newsapi',
+    name: 'NewsApi',
+    component: () => import('../views/NewsApiView.vue'),
+    meta: { title: '在线搜索', icon: '🌍' },
+  },
+  {
     path: '/query',
     name: 'Query',
     component: () => import('../views/QueryView.vue'),
     meta: { title: '智能问答', icon: '💬' },
+  },
+  {
+    path: '/webhook',
+    name: 'Webhook',
+    component: () => import('../views/WebhookView.vue'),
+    meta: { title: '消息推送', icon: '🔔' },
   },
   {
     path: '/settings',

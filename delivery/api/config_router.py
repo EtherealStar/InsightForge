@@ -20,6 +20,7 @@ class ConfigResponse(BaseModel):
     embedding_model: str
     log_level: str
     article_retention_days: int
+    news_api_key: str
 
 
 class ConfigUpdate(BaseModel):
@@ -35,6 +36,7 @@ class ConfigUpdate(BaseModel):
     embedding_model: str = ""
     log_level: str = "INFO"
     article_retention_days: int = 90
+    news_api_key: str = ""
 
 
 def _mask_key(key: str) -> str:
@@ -108,6 +110,7 @@ def get_config():
         embedding_model=env.get("EMBEDDING_MODEL", ""),
         log_level=env.get("LOG_LEVEL", "INFO"),
         article_retention_days=int(env.get("ARTICLE_RETENTION_DAYS", "90")),
+        news_api_key=_mask_key(env.get("NEWSAPI_KEY", "")),
     )
 
 
@@ -131,6 +134,7 @@ def update_config(config: ConfigUpdate):
         "embedding_model": "EMBEDDING_MODEL",
         "log_level": "LOG_LEVEL",
         "article_retention_days": "ARTICLE_RETENTION_DAYS",
+        "news_api_key": "NEWSAPI_KEY",
     }
 
     for field_name, env_key in field_to_env.items():
@@ -142,9 +146,20 @@ def update_config(config: ConfigUpdate):
 
     try:
         _write_env_file(updates)
-        return {"status": "ok", "message": "配置已保存，重启后端以加载新配置"}
+        # 热重载：写入 .env 后立即刷新运行时配置与组件
+        from core.config_manager import get_config_manager
+        reload_result = get_config_manager().reload()
+        return {"status": "ok", "message": "配置已保存并立即生效", "reload": reload_result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"保存配置失败: {e}")
+
+
+@router.post("/reload")
+def reload_config():
+    """手动触发配置热重载（重新读取 .env 并重建受影响组件）"""
+    from core.config_manager import get_config_manager
+    result = get_config_manager().reload()
+    return {"status": "ok", **result}
 
 
 @router.get("/providers")

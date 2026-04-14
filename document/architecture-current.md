@@ -1,19 +1,20 @@
 # Logos 当前架构文档
 
-> **文档版本**：v1.0
-> **基于代码快照时间**：2026-04-08
-> **项目阶段**：Demo+ （已超越原始 Demo 设计，包含 Vue 前端 + FastAPI 后端）
+> **文档版本**：v1.1
+> **基于代码快照时间**：2026-04-10
+> **项目阶段**：Demo+ （已超越原始 Demo 设计，包含 Vue 前端 + FastAPI 后端 + Webhook 推送）
 
 ---
 
 ## 1. 系统概览
 
-Logos 是一个**个人 AI 新闻分析助手**，具备两大核心能力：
+Logos 是一个**个人 AI 新闻分析助手**，具备三大核心能力：
 
 1. **定时 Pipeline**：自动从多个 RSS 新闻源抓取内容 → 清洗去重 → 向量化存储 → 每日自动生成新闻简报
 2. **交互式查询**：用户通过自然语言提问，系统执行 RAG（检索增强生成）从历史新闻库中检索并调用 LLM 给出分析回答
+3. **Webhook 推送**：将新闻简报通过 Webhook 推送到飞书、钉钉、企业微信、Telegram、ntfy 等平台，支持手动推送和简报生成后自动推送
 
-当前系统已从纯 Streamlit Demo 演进为**前后端分离架构**（Vue 3 + FastAPI），同时保留 Streamlit 作为备用界面。
+当前系统已从纯 Streamlit Demo 演进为**前后端分离架构**（Vue 3 + FastAPI）。
 
 ---
 
@@ -33,7 +34,6 @@ Logos 是一个**个人 AI 新闻分析助手**，具备两大核心能力：
 | **Embedding** | openai SDK（自定义端点） | OpenAI 格式兼容 API |
 | **任务调度** | APScheduler（BlockingScheduler） | 独立进程，interval + cron 触发 |
 | **配置管理** | pydantic-settings + .env | 类型校验 + 环境变量加载 |
-| **界面（备用）** | Streamlit | 保留兼容，独立进程 |
 | **测试** | pytest | 单元测试 + 集成测试 |
 
 ---
@@ -43,23 +43,23 @@ Logos 是一个**个人 AI 新闻分析助手**，具备两大核心能力：
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                        前端表现层 (Frontend)                        │
-│   Vue 3 SPA: NewsView │ BriefView │ QueryView │ Settings │ Config │
+│   Vue 3 SPA: NewsView │ BriefView │ QueryView │ WebhookView │ ...  │
 │   通过 Axios 调用 /api/* 端点                                      │
 ├────────────────────────────────────────────────────────────────────┤
 │                     后端表现层 (Delivery)                           │
 │   FastAPI Server (server.py)                                       │
 │   ├── news_router    ─ /api/news/*     新闻 CRUD + Pipeline        │
-│   ├── brief_router   ─ /api/briefs/*   简报列表/查看/生成           │
+│   ├── brief_router   ─ /api/briefs/*   简报列表/查看/生成(+自动推送)│
 │   ├── query_router   ─ /api/query/*    RAG 问答 (普通 + SSE 流式)  │
+│   ├── webhook_router ─ /api/webhook/*  推送渠道管理 + 消息推送     │
 │   ├── config_router  ─ /api/config/*   .env 配置读写               │
 │   ├── settings_router─ /api/settings/* RSS 源管理 + 调度参数       │
 │   └── health         ─ /api/health     健康检查                    │
 │                                                                    │
-│   Streamlit (streamlit_app.py) — 备用界面，独立进程                 │
 │   CLI (cli.py) — 调试工具                                          │
 ├────────────────────────────────────────────────────────────────────┤
 │                     应用服务层 (Services)                           │
-│   PipelineService  │  QueryService  │  BriefService                │
+│   PipelineService │ QueryService │ BriefService │ WebhookService   │
 │   编排基础设施组件，不直接操作数据库或外部 API                       │
 ├────────────────────────────────────────────────────────────────────┤
 │                     领域模型层 (Models)                             │
@@ -122,20 +122,21 @@ Logos/
 │   ├── __init__.py
 │   ├── pipeline_service.py         # PipelineService (抓取→存储→向量化)
 │   ├── query_service.py            # QueryService (RAG 检索+回答)
-│   └── brief_service.py            # BriefService (日报生成)
+│   ├── brief_service.py            # BriefService (日报生成)
+│   └── webhook_service.py          # WebhookService (多平台推送)
 │
 ├── delivery/                       # 后端表现层
 │   ├── __init__.py
 │   ├── server.py                   # FastAPI 应用入口
-│   ├── streamlit_app.py            # Streamlit 备用界面
 │   ├── cli.py                      # CLI 调试工具
 │   └── api/                        # FastAPI 路由模块
 │       ├── __init__.py
 │       ├── news_router.py          # 新闻 CRUD + Pipeline 触发
-│       ├── brief_router.py         # 简报管理
+│       ├── brief_router.py         # 简报管理 (+自动推送联动)
 │       ├── query_router.py         # AI 问答 (含 SSE 流式)
 │       ├── config_router.py        # .env 配置管理
-│       └── settings_router.py      # RSS 源 + 调度参数管理
+│       ├── settings_router.py      # RSS 源 + 调度参数管理
+│       └── webhook_router.py       # 推送渠道管理 + 消息推送
 │
 ├── scheduler/                      # 调度层 (独立进程)
 │   ├── __init__.py
@@ -158,6 +159,7 @@ Logos/
 │       │   ├── NewsView.vue        # 新闻列表页
 │       │   ├── BriefView.vue       # 简报页
 │       │   ├── QueryView.vue       # 智能问答页
+│       │   ├── WebhookView.vue     # 推送渠道管理页
 │       │   ├── SettingsView.vue    # 功能设置页 (RSS/调度)
 │       │   └── ConfigView.vue      # API 配置页
 │       └── assets/styles/
@@ -179,7 +181,8 @@ Logos/
 ├── data/                           # 运行时数据 (.gitignore)
 │   ├── news.db                     # SQLite 数据库
 │   ├── chroma/                     # ChromaDB 向量文件
-│   └── feeds_config.json           # 前端管理的 RSS 源列表
+│   ├── feeds_config.json           # 前端管理的 RSS 源列表
+│   └── webhook_config.json         # 推送渠道配置 + 自动推送开关
 │
 ├── output/                         # 日报输出
 │   └── daily_brief_YYYY-MM-DD.md
@@ -317,7 +320,7 @@ QueryService.answer() / answer_stream()
         AI 回答 → 返回前端
 ```
 
-### 6.3 简报生成数据流
+### 6.3 简报生成 + 推送数据流
 
 ```
 触发（定时 / 手动按钮 / API）
@@ -331,8 +334,47 @@ BriefService.generate(hours=24)
     │
     ├─ LLMClient.generate(BRIEF_SYSTEM_PROMPT, context)
     │
-    └─ DailyBrief.save_to_file(output_path)
-          → output/daily_brief_YYYY-MM-DD.md
+    ├─ DailyBrief.save_to_file(output_path)
+    │     → output/daily_brief_YYYY-MM-DD.md
+    │
+    └─ [auto_push=true?]
+          │
+          ▼
+        WebhookService.broadcast(content_markdown)
+          │  遍历所有 enabled 渠道
+          │  按平台格式化 → requests.post()
+          ▼
+        飞书 / 钉钉 / 企业微信 / Telegram / ntfy
+```
+
+### 6.4 Webhook 推送数据流
+
+```
+触发方式：
+  ├─ 手动推送（前端按钮 / API /api/webhook/push）
+  ├─ 简报生成后自动推送（auto_push 开关）
+  └─ 单渠道推送 / 测试消息
+    │
+    ▼
+WebhookService
+    │
+    ├─ load_channels()  ← data/webhook_config.json
+    │     过滤 enabled=true 的渠道
+    │
+    ├─ 读取最新简报文件 (output/daily_brief_*.md)
+    │
+    ├─ 按平台格式化消息：
+    │   ├── 飞书:    Interactive Card (JSON)    max 30,000 字符
+    │   ├── 钉钉:    Markdown msgtype           max 20,000 字符
+    │   ├── 企业微信: Markdown msgtype           max  4,096 字符
+    │   ├── Telegram: sendMessage + Markdown     max  4,096 字符
+    │   └── ntfy:    POST text/markdown          max  4,096 字符
+    │
+    └─ requests.post() → 各平台 Webhook 端点
+          │  超长内容自动截断
+          │  单渠道失败不影响其他渠道
+          ▼
+        返回 [{status, channel, result/error}, ...]
 ```
 
 ---
@@ -352,9 +394,19 @@ BriefService.generate(hours=24)
 | POST | `/api/news/batch-delete` | 批量删除文章（含向量记录） |
 | GET | `/api/briefs` | 简报文件列表 |
 | GET | `/api/briefs/{filename}` | 单份简报内容 |
-| POST | `/api/briefs/generate` | 手动生成简报 |
+| POST | `/api/briefs/generate` | 手动生成简报（自动推送联动） |
 | POST | `/api/query` | 非流式问答 |
 | POST | `/api/query/stream` | SSE 流式问答 |
+| GET | `/api/webhook/platforms` | 支持的推送平台列表 |
+| GET | `/api/webhook/channels` | 推送渠道列表（URL 脱敏） |
+| POST | `/api/webhook/channels` | 添加推送渠道 |
+| PUT | `/api/webhook/channels/{id}` | 更新推送渠道 |
+| DELETE | `/api/webhook/channels/{id}` | 删除推送渠道 |
+| POST | `/api/webhook/channels/{id}/test` | 发送测试消息 |
+| POST | `/api/webhook/push` | 推送最新简报到所有启用渠道 |
+| POST | `/api/webhook/push/{id}` | 推送到指定渠道 |
+| GET | `/api/webhook/auto-push` | 获取自动推送状态 |
+| PUT | `/api/webhook/auto-push` | 设置自动推送开关 |
 | GET | `/api/config` | 获取配置（API Key 脱敏） |
 | PUT | `/api/config` | 更新 .env 配置 |
 | GET | `/api/config/providers` | LLM 提供商列表 |
@@ -372,6 +424,7 @@ BriefService.generate(hours=24)
 | `/news` | `NewsView.vue` | 新闻列表浏览、筛选、Pipeline 触发、批量删除 |
 | `/briefs` | `BriefView.vue` | 简报列表、查看、手动生成 |
 | `/query` | `QueryView.vue` | 智能问答（SSE 流式输出） |
+| `/webhook` | `WebhookView.vue` | 推送渠道管理、测试、手动推送、自动推送开关 |
 | `/settings` | `SettingsView.vue` | RSS 源管理 + 调度参数配置 |
 | `/config` | `ConfigView.vue` | LLM/Embedding API 配置管理 |
 
@@ -400,6 +453,7 @@ BriefService.generate(hours=24)
 | LLM/Embedding API 参数 | `.env` 文件 | 前端 ConfigView 通过 API 读写 |
 | RSS 源列表 | `data/feeds_config.json` | 前端 SettingsView 通过 API 增删 |
 | 调度参数 | `.env` 文件 | 前端 SettingsView 通过 API 读写 |
+| 推送渠道 + 自动推送 | `data/webhook_config.json` | 前端 WebhookView 通过 API 增删改 |
 | 应用默认值 | `core/config.py` AppConfig | 代码内 pydantic Field default |
 
 ### 8.2 AppConfig 关键字段
@@ -459,11 +513,9 @@ NewsAssistantError (基础异常)
   └── 监听 :5173
   └── 代理 /api/* 到 :8005
 
-进程 3 (备用): Streamlit (delivery/streamlit_app.py)
-  └── 独立 UI 界面，通过 SQLite 文件共享数据
 ```
 
-**进程间数据共享**：通过 SQLite 文件（支持并发读 + 单写）和文件系统（日报 .md 文件、feeds_config.json）。
+**进程间数据共享**：通过 SQLite 文件（支持并发读 + 单写）和文件系统（日报 .md 文件、feeds_config.json、webhook_config.json）。
 
 ---
 
@@ -540,7 +592,7 @@ CREATE INDEX idx_source ON articles(source);
 | RSS 串行抓取 | 源多时抓取慢 | → ThreadPoolExecutor 并发 |
 | 仅语义检索 | 缺少全文搜索能力 | → RRF 混合检索 |
 | 标准 logging | 非结构化，难以查询 | → structlog |
-| 无推送通知 | 用户需主动查看 | → Telegram Bot |
+| ~~无推送通知~~ | ✅ 已支持 Webhook 推送 | 飞书/钉钉/企业微信/Telegram/ntfy |
 | 单环境 .env | 无 dev/prod 区分 | → 多环境 .env |
 | 无容器化 | 部署需手动配置 | → Docker Compose |
 | API Router 每次请求重建服务实例 | 重复初始化开销 | → 应用级单例 / DI 容器 |

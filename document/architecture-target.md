@@ -56,7 +56,6 @@
 │   │     每日定时自动推送简报                                            │
 │   ├── [NEW] Webhook 推送 (webhook_delivery.py)                        │
 │   │     全平台 Webhook + ntfy                                          │
-│   ├── Streamlit (保留备用)                                             │
 │   └── CLI (保持)                                                       │
 ├────────────────────────────────────────────────────────────────────────┤
 │                        应用服务层 (Services)                           │
@@ -124,7 +123,6 @@ Logos/
 │
 ├── delivery/                       # 🆕 新增 Telegram Bot + Webhook
 │   ├── server.py                   # ✅ 保持
-│   ├── streamlit_app.py            # ✅ 保持（补充统计面板）
 │   ├── cli.py                      # ✅ 保持
 │   ├── telegram_bot.py             # 🆕 Telegram 推送 + 命令
 │   ├── webhook_delivery.py         # 🆕 全平台 Webhook + ntfy

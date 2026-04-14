@@ -50,11 +50,10 @@ def _article_to_response(article) -> ArticleResponse:
 
 
 def _get_article_store():
-    """延迟导入以避免循环依赖"""
-    from core.config import AppConfig
-    from core.factory import create_article_store
-    config = AppConfig()
-    return config, create_article_store(config)
+    """从 ConfigManager 获取配置与 ArticleStore 单例"""
+    from core.config_manager import get_config_manager
+    mgr = get_config_manager()
+    return mgr.config, mgr.article_store
 
 
 @router.get("", response_model=ArticleListResponse)
@@ -106,29 +105,22 @@ def get_sources():
 def run_pipeline():
     """手动触发 Pipeline 抓取（RSS + 网页爬取）"""
     try:
-        from core.config import AppConfig
-        from core.factory import (
-            create_article_store,
-            create_vector_store,
-            create_embedding_client,
-        )
+        from core.config_manager import get_config_manager
         from infrastructure.collector import NewsCollector
         from infrastructure.web_crawler import WebCrawler
         from services.pipeline_service import PipelineService
         from delivery.api.settings_router import _load_feeds, _load_sites
 
-        config = AppConfig()
+        mgr = get_config_manager()
+        config = mgr.config
         config.rss_feeds = _load_feeds()
-        article_store = create_article_store(config)
-        vector_store = create_vector_store(config)
-        embedding_client = create_embedding_client(config)
         collector = NewsCollector(config)
 
         crawl_sites = _load_sites()
         web_crawler = WebCrawler() if crawl_sites else None
 
         service = PipelineService(
-            collector, article_store, vector_store, embedding_client,
+            collector, mgr.article_store, mgr.vector_store, mgr.embedding_client,
             web_crawler=web_crawler,
             crawl_sites=crawl_sites,
         )
@@ -144,14 +136,14 @@ def batch_delete_articles(req: BatchDeleteRequest):
     if not req.article_ids:
         return {"status": "ok", "deleted": 0}
 
-    config, store = _get_article_store()
-    from core.factory import create_vector_store
+    from core.config_manager import get_config_manager
+    mgr = get_config_manager()
+    store = mgr.article_store
     
     deleted_db = store.delete_articles(req.article_ids)
     
     try:
-        vector_store = create_vector_store(config)
-        vector_store.delete_articles(req.article_ids)
+        mgr.vector_store.delete_articles(req.article_ids)
     except Exception as e:
         logger.error(f"同步删除 ChromaDB 记录未遂，不阻碍主流程: {e}")
         
