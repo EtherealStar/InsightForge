@@ -17,6 +17,7 @@ from core.factory import (
     create_vector_store,
     create_llm_client,
     create_embedding_client,
+    create_chunking_service,
 )
 from infrastructure.collector import NewsCollector
 from services.pipeline_service import PipelineService
@@ -29,16 +30,20 @@ def cmd_pipeline(config: AppConfig):
     article_store = create_article_store(config)
     vector_store = create_vector_store(config)
     embedding_client = create_embedding_client(config)
+    chunking_service = create_chunking_service(config)
     collector = NewsCollector(config)
 
     service = PipelineService(
-        collector, article_store, vector_store, embedding_client
+        collector, article_store, vector_store, embedding_client,
+        chunking_service=chunking_service,
+        markdown_output_path=config.markdown_output_path,
     )
     result = service.run()
     print(f"\n✅ Pipeline 完成:")
     print(f"   抓取: {result['fetched']} 篇")
     print(f"   新增: {result['new']} 篇")
-    print(f"   向量化: {result['embedded']} 篇")
+    print(f"   分块: {result.get('chunks', 0)} 子 chunks + {result.get('parent_chunks', 0)} 父 chunks")
+    print(f"   向量化: {result['embedded']} 个子 chunks")
     if result["errors"]:
         print(f"   ⚠ 错误: {result['errors']}")
 
@@ -68,8 +73,12 @@ def cmd_ask(config: AppConfig, question: str):
     )
 
     print(f"\n🔍 正在检索并分析...\n")
-    answer = service.answer(question)
-    print(answer)
+    final_answer = ""
+    for event in service.answer_agent_stream(question):
+        if event.event_type == "answer":
+            final_answer = event.content
+            break
+    print(final_answer or "未获得回答，请稍后重试。")
 
 
 def cmd_stats(config: AppConfig):

@@ -1,0 +1,215 @@
+"""深度研究 API — 研究报告 CRUD + SSE 流式研究"""
+import io
+import json
+import os
+import structlog
+import zipfile
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
+
+router = APIRouter(prefix="/api/research", tags=["research"])
+logger = structlog.get_logger(__name__)
+
+_RESEARCH_DIR = os.path.join("output", "research")
+
+
+class ResearchRequest(BaseModel):
+    topic: str
+
+
+class BatchFilenamesRequest(BaseModel):
+    filenames: list[str]
+
+
+def _validate_filename(filename: str) -> None:
+    """校验文件名安全性，防止路径穿越"""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail=f"无效的文件名: {filename}")
+
+
+@router.post("/stream")
+def research_stream(req: ResearchRequest):
+    """SSE 流式深度研究 — ReAct Agent 深度研究模式
+
+    每个事件以 JSON 格式传输：
+        data: {"event_type": "thought", "content": "..."}
+        data: {"event_type": "action", "tool_name": "...", "tool_input": {...}}
+        data: {"event_type": "observation", "content": "..."}
+        data: {"event_type": "answer", "content": "..."}
+        data: [DONE]
+    """
+    try:
+        from core.config_manager import get_config_manager
+        from agent.react.deep_research_runner import DeepResearchRunner
+        from agent.tools.registry import get_tool_registry
+        from services.deep_research_service import DeepResearchService
+
+        mgr = get_config_manager()
+        if not mgr.llm_client:
+            raise HTTPException(
+                status_code=503, detail="LLM 客户端未配置，无法执行深度研究"
+            )
+
+        report_service = DeepResearchService(output_dir=_RESEARCH_DIR)
+        runner = DeepResearchRunner(
+            llm_client=mgr.llm_client,
+            tool_registry=get_tool_registry(),
+            report_service=report_service,
+            max_steps=15,
+        )
+
+        def event_generator():
+            try:
+                for event in runner.run_stream(req.topic):
+                    event_data = json.dumps(
+                        event.to_dict(), ensure_ascii=False
+                    )
+                    yield f"data: {event_data}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                logger.error(f"深度研究失败: {e}")
+                error_event = json.dumps(
+                    {"event_type": "error", "content": str(e)},
+                    ensure_ascii=False,
+                )
+                yield f"data: {error_event}\n\n"
+                yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"深度研究初始化失败: {e}")
+        raise HTTPException(status_code=500, detail=f"深度研究失败: {e}")
+
+
+@router.get("")
+def list_reports():
+    """获取所有研究报告列表"""
+    from services.deep_research_service import DeepResearchService
+
+    service = DeepResearchService(output_dir=_RESEARCH_DIR)
+    reports = service.list_reports()
+    return {"reports": reports}
+
+
+@router.get("/{filename}")
+def get_report(filename: str):
+    """获取单份研究报告内容"""
+    _validate_filename(filename)
+    from services.deep_research_service import DeepResearchService
+
+    service = DeepResearchService(output_dir=_RESEARCH_DIR)
+    report = service.get_report(filename)
+    if report is None:
+        raise HTTPException(status_code=404, detail="未找到该研究报告")
+    return report
+
+
+@router.delete("/{filename}")
+def delete_report(filename: str):
+    """删除一份研究报告"""
+    _validate_filename(filename)
+    from services.deep_research_service import DeepResearchService
+
+    service = DeepResearchService(output_dir=_RESEARCH_DIR)
+    if service.delete_report(filename):
+        return {"status": "ok", "message": f"已删除: {filename}"}
+    raise HTTPException(status_code=404, detail="未找到该研究报告")
+
+
+@router.post("/batch-delete")
+def batch_delete_reports(req: BatchFilenamesRequest):
+    """批量删除研究报告"""
+    from services.deep_research_service import DeepResearchService
+
+    if not req.filenames:
+        raise HTTPException(status_code=400, detail="请至少选择一份报告")
+
+    deleted = 0
+    errors = []
+    for filename in req.filenames:
+        try:
+            _validate_filename(filename)
+            service = DeepResearchService(output_dir=_RESEARCH_DIR)
+            if service.delete_report(filename):
+                deleted += 1
+            else:
+                errors.append(f"文件不存在: {filename}")
+        except HTTPException:
+            errors.append(f"无效的文件名: {filename}")
+        except Exception as e:
+            errors.append(f"删除 {filename} 失败: {e}")
+
+    return {"deleted": deleted, "errors": errors}
+
+
+@router.post("/batch-export")
+def batch_export_reports(req: BatchFilenamesRequest):
+    """批量导出研究报告（单文件 .md，多文件 .zip）"""
+    if not req.filenames:
+        raise HTTPException(status_code=400, detail="请至少选择一份报告")
+
+    valid_files: list[tuple[str, str]] = []
+    for filename in req.filenames:
+        _validate_filename(filename)
+        filepath = os.path.join(_RESEARCH_DIR, filename)
+        if not os.path.exists(filepath):
+            raise HTTPException(status_code=404, detail=f"未找到报告: {filename}")
+        valid_files.append((filename, filepath))
+
+    if len(valid_files) == 1:
+        filename, filepath = valid_files[0]
+        return FileResponse(
+            path=filepath,
+            filename=filename,
+            media_type="text/markdown",
+        )
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for filename, filepath in valid_files:
+            zf.write(filepath, arcname=filename)
+    zip_buffer.seek(0)
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="research_export.zip"',
+        },
+    )
+
+
+@router.post("/push/{filename}")
+def push_report(filename: str):
+    """推送研究报告到所有启用的 Webhook 渠道"""
+    _validate_filename(filename)
+    from services.deep_research_service import DeepResearchService
+
+    service = DeepResearchService(output_dir=_RESEARCH_DIR)
+    report = service.get_report(filename)
+    if report is None:
+        raise HTTPException(status_code=404, detail="未找到该研究报告")
+
+    try:
+        from services.webhook_service import WebhookService
+        webhook_service = WebhookService()
+        results = webhook_service.broadcast(report["content"])
+        push_ok = sum(1 for r in results if r["status"] == "ok")
+        return {
+            "status": "ok",
+            "message": f"推送完成: {push_ok}/{len(results)} 个渠道成功",
+            "push_results": results,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"推送失败: {e}")

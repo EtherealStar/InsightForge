@@ -1,11 +1,11 @@
 """新闻数据 API"""
-import logging
+import structlog
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime
 
 router = APIRouter(prefix="/api/news", tags=["news"])
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ArticleResponse(BaseModel):
@@ -16,10 +16,12 @@ class ArticleResponse(BaseModel):
     html_content: str
     summary: str
     source: str
+    author: str
     language: str
     published_at: str | None
     created_at: str
     status: str
+    tags: list[str]
 
 
 class ArticleListResponse(BaseModel):
@@ -42,10 +44,12 @@ def _article_to_response(article) -> ArticleResponse:
         html_content=article.html_content or "",
         summary=article.summary,
         source=article.source,
+        author=article.author or "",
         language=article.language.value if hasattr(article.language, 'value') else str(article.language),
         published_at=article.published_at.isoformat() if article.published_at else None,
         created_at=article.created_at.isoformat() if article.created_at else "",
         status=article.status.value if hasattr(article.status, 'value') else str(article.status),
+        tags=article.tags or [],
     )
 
 
@@ -103,32 +107,14 @@ def get_sources():
 
 @router.post("/pipeline")
 def run_pipeline():
-    """手动触发 Pipeline 抓取（RSS + 网页爬取）"""
+    """手动触发 Pipeline 抓取（异步执行）"""
     try:
-        from core.config_manager import get_config_manager
-        from infrastructure.collector import NewsCollector
-        from infrastructure.web_crawler import WebCrawler
-        from services.pipeline_service import PipelineService
-        from delivery.api.settings_router import _load_feeds, _load_sites
-
-        mgr = get_config_manager()
-        config = mgr.config
-        config.rss_feeds = _load_feeds()
-        collector = NewsCollector(config)
-
-        crawl_sites = _load_sites()
-        web_crawler = WebCrawler() if crawl_sites else None
-
-        service = PipelineService(
-            collector, mgr.article_store, mgr.vector_store, mgr.embedding_client,
-            web_crawler=web_crawler,
-            crawl_sites=crawl_sites,
-        )
-        result = service.run()
-        return {"status": "ok", "result": result}
+        from scheduler.tasks import run_pipeline_task
+        task = run_pipeline_task.apply_async(kwargs={"manual": True})
+        return {"status": "ok", "task_id": task.id, "message": "Pipeline 已在后台开始运行"}
     except Exception as e:
-        logger.error(f"Pipeline 执行失败: {e}")
-        raise HTTPException(status_code=500, detail=f"Pipeline 执行失败: {e}")
+        logger.error(f"Pipeline 异步触发失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Pipeline 触发失败: {e}")
 
 @router.post("/batch-delete")
 def batch_delete_articles(req: BatchDeleteRequest):
@@ -143,11 +129,46 @@ def batch_delete_articles(req: BatchDeleteRequest):
     deleted_db = store.delete_articles(req.article_ids)
     
     try:
-        mgr.vector_store.delete_articles(req.article_ids)
+        mgr.vector_store.delete_by_article_ids(req.article_ids)
     except Exception as e:
-        logger.error(f"同步删除 ChromaDB 记录未遂，不阻碍主流程: {e}")
+        logger.error(f"同步删除 Qdrant chunk 向量记录未遂，不阻碍主流程: {e}")
+
+    try:
+        store.delete_parent_chunks_by_article_ids(req.article_ids)
+    except Exception as e:
+        logger.error(f"同步删除 PostgreSQL 父 chunks 未遂，不阻碍主流程: {e}")
         
     return {"status": "ok", "deleted": deleted_db}
+
+
+class ResummarizeRequest(BaseModel):
+    article_ids: list[int]
+
+
+@router.post("/resummarize")
+def resummarize_articles(req: ResummarizeRequest):
+    """重新对指定文章执行 AI 摘要 + 打标签"""
+    if not req.article_ids:
+        return {"status": "ok", "result": {"success": 0, "failed": 0, "total": 0}}
+
+    from core.config_manager import get_config_manager
+    from services.summary_service import SummaryService
+
+    mgr = get_config_manager()
+    if not mgr.summary_llm_client:
+        raise HTTPException(status_code=400, detail="AI 摘要服务未配置 LLM 客户端")
+
+    service = SummaryService(
+        llm_client=mgr.summary_llm_client,
+        article_store=mgr.article_store,
+        batch_size=mgr.config.summary_batch_size,
+    )
+    try:
+        result = service.resummarize_articles(req.article_ids)
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        logger.error(f"AI 重新摘要失败: {e}")
+        raise HTTPException(status_code=500, detail=f"AI 重新摘要失败: {e}")
 
 
 @router.get("/{article_id}", response_model=ArticleResponse)

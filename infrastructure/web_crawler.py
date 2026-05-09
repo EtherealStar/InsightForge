@@ -1,6 +1,6 @@
 """基于 Crawlee 的网页新闻爬取器"""
 import asyncio
-import logging
+import structlog
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -11,7 +11,7 @@ from crawlee import ConcurrencySettings
 from models.article import Article, Language
 from core.exceptions import CollectorError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class WebCrawler:
@@ -47,6 +47,7 @@ class WebCrawler:
         seed_domain = urlparse(site_url).netloc
 
         concurrency = ConcurrencySettings(
+            desired_concurrency=self.max_concurrency,
             max_concurrency=self.max_concurrency,
         )
 
@@ -127,7 +128,7 @@ class WebCrawler:
                 self._crawl(site_name, site_url, link_selector)
             )
 
-    def crawl_all(self, sites: list[dict]) -> list[Article]:
+    def crawl_all(self, sites: list[dict]) -> tuple[list[Article], list[str]]:
         """
         爬取所有配置的网站源。
         每个站点独立 try/except，单站失败不影响整体。
@@ -135,6 +136,7 @@ class WebCrawler:
         sites 格式: [{"name": "...", "url": "...", "max_pages": 20, "link_selector": "a.article"}]
         """
         all_articles: list[Article] = []
+        errors: list[str] = []
         for site in sites:
             name = site.get("name", "unknown")
             url = site.get("url", "")
@@ -150,9 +152,11 @@ class WebCrawler:
                 all_articles.extend(articles)
                 logger.info(f"✅ {name}: 爬取到 {len(articles)} 篇文章")
             except Exception as e:
-                logger.error(f"❌ {name}: 爬取失败 — {e}")
+                msg = f"❌ {name}: 爬取失败 — {e}"
+                logger.error(msg)
+                errors.append(msg)
         logger.info(f"[WebCrawler] 总计爬取 {len(all_articles)} 篇文章")
-        return all_articles
+        return all_articles, errors
 
 
 def _detect_language(text: str) -> Language:

@@ -26,6 +26,9 @@ class SiteItem(BaseModel):
 class ScheduleConfig(BaseModel):
     fetch_interval_hours: int = 4
     daily_brief_hour: int = 8
+    brief_fetch_hours: int = 24
+    brief_mode: str = "daily"  # "daily" or "interval"
+    brief_interval_hours: int = 8
     max_articles_per_fetch: int = 20
     article_retention_days: int = 90
 
@@ -101,6 +104,9 @@ def get_schedule():
     return ScheduleConfig(
         fetch_interval_hours=int(env.get("FETCH_INTERVAL_HOURS", "4")),
         daily_brief_hour=int(env.get("DAILY_BRIEF_HOUR", "8")),
+        brief_fetch_hours=int(env.get("BRIEF_FETCH_HOURS", "24")),
+        brief_mode=env.get("BRIEF_MODE", "daily"),
+        brief_interval_hours=int(env.get("BRIEF_INTERVAL_HOURS", "8")),
         max_articles_per_fetch=int(env.get("MAX_ARTICLES_PER_FETCH", "20")),
         article_retention_days=int(env.get("ARTICLE_RETENTION_DAYS", "90")),
     )
@@ -113,6 +119,9 @@ def update_schedule(schedule: ScheduleConfig):
     updates = {
         "FETCH_INTERVAL_HOURS": str(schedule.fetch_interval_hours),
         "DAILY_BRIEF_HOUR": str(schedule.daily_brief_hour),
+        "BRIEF_FETCH_HOURS": str(schedule.brief_fetch_hours),
+        "BRIEF_MODE": schedule.brief_mode,
+        "BRIEF_INTERVAL_HOURS": str(schedule.brief_interval_hours),
         "MAX_ARTICLES_PER_FETCH": str(schedule.max_articles_per_fetch),
         "ARTICLE_RETENTION_DAYS": str(schedule.article_retention_days),
     }

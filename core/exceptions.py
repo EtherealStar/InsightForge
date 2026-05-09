@@ -23,6 +23,10 @@ class EmbeddingError(NewsAssistantError):
     """向量化相关错误"""
 
 
+class RerankError(NewsAssistantError):
+    """Rerank 重排序相关错误"""
+
+
 class LLMError(NewsAssistantError):
     """LLM 调用错误"""
 
@@ -35,3 +39,7 @@ class RateLimitError(LLMError):
 
 class ConfigError(NewsAssistantError):
     """配置错误"""
+
+
+class ToolError(NewsAssistantError):
+    """工具层基础异常（详细子类见 agent/tools/errors.py）"""

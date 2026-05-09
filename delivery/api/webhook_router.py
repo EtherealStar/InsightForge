@@ -1,5 +1,5 @@
 """推送渠道管理 API"""
-import logging
+import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -7,7 +7,7 @@ from typing import Optional
 from services.webhook_service import WebhookService, SUPPORTED_PLATFORMS
 
 router = APIRouter(prefix="/api/webhook", tags=["webhook"])
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _get_service() -> WebhookService:

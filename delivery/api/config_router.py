@@ -18,9 +18,21 @@ class ConfigResponse(BaseModel):
     embedding_api_key: str
     embedding_base_url: str
     embedding_model: str
+    rerank_enabled: bool
+    rerank_api_key: str
+    rerank_base_url: str
+    rerank_model: str
+    rerank_top_k_multiplier: int
     log_level: str
     article_retention_days: int
     news_api_key: str
+    tavily_api_key: str
+    summary_use_same_llm: bool
+    summary_llm_provider: str
+    summary_llm_api_key: str
+    summary_llm_base_url: str
+    summary_llm_model: str
+    summary_batch_size: int
 
 
 class ConfigUpdate(BaseModel):
@@ -34,10 +46,21 @@ class ConfigUpdate(BaseModel):
     embedding_api_key: str = ""
     embedding_base_url: str = ""
     embedding_model: str = ""
+    rerank_enabled: bool = False
+    rerank_api_key: str = ""
+    rerank_base_url: str = ""
+    rerank_model: str = ""
+    rerank_top_k_multiplier: int = 3
     log_level: str = "INFO"
     article_retention_days: int = 90
     news_api_key: str = ""
-
+    tavily_api_key: str = ""
+    summary_use_same_llm: bool = True
+    summary_llm_provider: str = ""
+    summary_llm_api_key: str = ""
+    summary_llm_base_url: str = ""
+    summary_llm_model: str = ""
+    summary_batch_size: int = 5
 
 def _mask_key(key: str) -> str:
     """脱敏 API Key，只显示前4位和后4位"""
@@ -108,9 +131,21 @@ def get_config():
         embedding_api_key=_mask_key(env.get("EMBEDDING_API_KEY", "")),
         embedding_base_url=env.get("EMBEDDING_BASE_URL", ""),
         embedding_model=env.get("EMBEDDING_MODEL", ""),
+        rerank_enabled=env.get("RERANK_ENABLED", "false").lower() in ("true", "1", "yes"),
+        rerank_api_key=_mask_key(env.get("RERANK_API_KEY", "")),
+        rerank_base_url=env.get("RERANK_BASE_URL", ""),
+        rerank_model=env.get("RERANK_MODEL", ""),
+        rerank_top_k_multiplier=int(env.get("RERANK_TOP_K_MULTIPLIER", "3")),
         log_level=env.get("LOG_LEVEL", "INFO"),
         article_retention_days=int(env.get("ARTICLE_RETENTION_DAYS", "90")),
         news_api_key=_mask_key(env.get("NEWSAPI_KEY", "")),
+        tavily_api_key=_mask_key(env.get("TAVILY_API_KEY", "")),
+        summary_use_same_llm=env.get("SUMMARY_USE_SAME_LLM", "true").lower() in ("true", "1", "yes"),
+        summary_llm_provider=env.get("SUMMARY_LLM_PROVIDER", ""),
+        summary_llm_api_key=_mask_key(env.get("SUMMARY_LLM_API_KEY", "")),
+        summary_llm_base_url=env.get("SUMMARY_LLM_BASE_URL", ""),
+        summary_llm_model=env.get("SUMMARY_LLM_MODEL", ""),
+        summary_batch_size=int(env.get("SUMMARY_BATCH_SIZE", "5")),
     )
 
 
@@ -132,9 +167,21 @@ def update_config(config: ConfigUpdate):
         "embedding_api_key": "EMBEDDING_API_KEY",
         "embedding_base_url": "EMBEDDING_BASE_URL",
         "embedding_model": "EMBEDDING_MODEL",
+        "rerank_enabled": "RERANK_ENABLED",
+        "rerank_api_key": "RERANK_API_KEY",
+        "rerank_base_url": "RERANK_BASE_URL",
+        "rerank_model": "RERANK_MODEL",
+        "rerank_top_k_multiplier": "RERANK_TOP_K_MULTIPLIER",
         "log_level": "LOG_LEVEL",
         "article_retention_days": "ARTICLE_RETENTION_DAYS",
         "news_api_key": "NEWSAPI_KEY",
+        "tavily_api_key": "TAVILY_API_KEY",
+        "summary_use_same_llm": "SUMMARY_USE_SAME_LLM",
+        "summary_llm_provider": "SUMMARY_LLM_PROVIDER",
+        "summary_llm_api_key": "SUMMARY_LLM_API_KEY",
+        "summary_llm_base_url": "SUMMARY_LLM_BASE_URL",
+        "summary_llm_model": "SUMMARY_LLM_MODEL",
+        "summary_batch_size": "SUMMARY_BATCH_SIZE",
     }
 
     for field_name, env_key in field_to_env.items():

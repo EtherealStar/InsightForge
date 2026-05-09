@@ -27,7 +27,7 @@ const routes = [
     path: '/query',
     name: 'Query',
     component: () => import('../views/QueryView.vue'),
-    meta: { title: '智能问答', icon: '💬' },
+    meta: { title: '智能助手', icon: '🧠' },
   },
   {
     path: '/webhook',

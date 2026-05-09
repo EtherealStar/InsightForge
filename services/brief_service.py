@@ -1,11 +1,11 @@
 """日报生成服务"""
-import logging
+import structlog
 from datetime import datetime
 
 from core.protocols import ArticleStoreProtocol, LLMClientProtocol
 from models.brief import DailyBrief
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 BRIEF_SYSTEM_PROMPT = """你是一位资深新闻编辑。请根据以下新闻文章生成一份中文每日简报。
 

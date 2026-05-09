@@ -22,7 +22,11 @@
         已选中 <strong>{{ selectedIds.length }}</strong> 篇文章
       </div>
       <div class="batch-buttons">
-        <button class="btn btn-sm btn-danger" :disabled="!selectedIds.length" @click="batchDelete">
+        <button class="btn btn-sm btn-accent" :disabled="!selectedIds.length || summarizing" @click="batchResummarize">
+          <span v-if="summarizing" class="spinner"></span>
+          {{ summarizing ? 'AI 处理中...' : '🤖 AI 重新摘要' }}
+        </button>
+        <button class="btn btn-sm btn-danger" :disabled="!selectedIds.length" @click="batchDelete" style="margin-left: 8px;">
           🗑 删除所选
         </button>
         <button class="btn btn-sm" @click="selectedIds = []" style="margin-left: 8px;" v-if="selectedIds.length">
@@ -163,6 +167,7 @@ const selectedArticle = ref(null)
 
 const selectionMode = ref(false)
 const selectedIds = ref([])
+const summarizing = ref(false)
 
 const toast = ref({ show: false, message: '', type: 'info' })
 
@@ -263,13 +268,35 @@ async function openDetail(article) {
   }
 }
 
+async function batchResummarize() {
+  if (!selectedIds.value.length) return
+  summarizing.value = true
+  showToast(`正在对 ${selectedIds.value.length} 篇文章执行 AI 摘要...`, 'info')
+  try {
+    const res = await newsApi.resummarize(selectedIds.value)
+    const r = res.data.result
+    showToast(`AI 摘要完成！成功 ${r.success} 篇，失败 ${r.failed} 篇`, r.failed > 0 ? 'warning' : 'success')
+    selectionMode.value = false
+    selectedIds.value = []
+    fetchArticles()
+  } catch (e) {
+    showToast('AI 摘要失败: ' + (e.response?.data?.detail || e.message), 'error')
+  } finally {
+    summarizing.value = false
+  }
+}
+
 async function runPipeline() {
   pipelineLoading.value = true
   showToast('正在执行新闻抓取...', 'info')
   try {
     const res = await newsApi.runPipeline()
     const r = res.data.result
-    showToast(`抓取完成！新增 ${r.new} 篇，向量化 ${r.embedded} 篇`, 'success')
+    if (r.errors && r.errors.length > 0) {
+      showToast(`抓取完成(带错误)！新增 ${r.new} 篇。错误: ${r.errors[0]}`, 'warning')
+    } else {
+      showToast(`抓取完成！新增 ${r.new} 篇，向量化 ${r.embedded} 篇`, 'success')
+    }
     fetchArticles()
     fetchSources()
   } catch (e) {

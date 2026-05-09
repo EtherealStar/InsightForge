@@ -1,5 +1,5 @@
 """新闻抓取：feedparser + trafilatura"""
-import logging
+import structlog
 from datetime import datetime
 import calendar
 
@@ -11,7 +11,7 @@ from core.config import AppConfig
 from core.exceptions import CollectorError, SourceUnavailableError
 from core.retry import with_retry
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class NewsCollector:
@@ -127,6 +127,11 @@ class NewsCollector:
         # 简单语言检测
         language = self._detect_language(title + content)
 
+        # 提取作者（feedparser 映射 dc:creator / atom:author → entry.author）
+        author = ""
+        if hasattr(entry, "author") and entry.author:
+            author = entry.author.strip()
+
         return Article(
             title=title,
             url=link,
@@ -134,6 +139,7 @@ class NewsCollector:
             html_content=html_content or "",
             summary=summary_clean[:500] if summary_clean else "",
             source=source_name,
+            author=author,
             language=language,
             published_at=published_at,
         )

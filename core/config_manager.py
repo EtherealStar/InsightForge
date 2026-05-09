@@ -12,7 +12,7 @@
 """
 
 import threading
-import logging
+import structlog
 from typing import Any, Callable
 
 from core.config import AppConfig
@@ -21,9 +21,12 @@ from core.factory import (
     create_vector_store,
     create_llm_client,
     create_embedding_client,
+    create_rerank_client,
+    create_summary_llm_client,
+    create_chunking_service,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ConfigManager:
@@ -61,6 +64,9 @@ class ConfigManager:
         self._vector_store: Any = None
         self._llm_client: Any = None
         self._embedding_client: Any = None
+        self._rerank_client: Any = None
+        self._summary_llm_client: Any = None
+        self._chunking_service: Any = None
 
         # 变更回调列表
         self._callbacks: list[Callable[[dict], None]] = []
@@ -88,6 +94,21 @@ class ConfigManager:
             except Exception as e:
                 logger.warning(f"Embedding 客户端创建失败: {e}")
                 self._embedding_client = None
+            try:
+                self._rerank_client = create_rerank_client(self._config)
+            except Exception as e:
+                logger.warning(f"Rerank 客户端创建失败: {e}")
+                self._rerank_client = None
+            try:
+                self._summary_llm_client = create_summary_llm_client(self._config)
+            except Exception as e:
+                logger.warning(f"Summary LLM 客户端创建失败: {e}")
+                self._summary_llm_client = None
+            try:
+                self._chunking_service = create_chunking_service(self._config)
+            except Exception as e:
+                logger.warning(f"分块服务创建失败: {e}")
+                self._chunking_service = None
 
     # ------------------------------------------------------------------
     # 公开 API
@@ -125,8 +146,8 @@ class ConfigManager:
             "openai_api_key", "google_api_key", "anthropic_api_key",
         }
         embed_fields = {"embedding_api_key", "embedding_base_url", "embedding_model"}
-        store_fields = {"db_path"}
-        vector_fields = {"chroma_path"}
+        store_fields = {"pg_dsn"}
+        vector_fields = {"qdrant_url", "qdrant_api_key", "qdrant_chunk_collection_name"}
 
         changed_keys = set(changes.keys())
         rebuilt: list[str] = []
@@ -153,6 +174,29 @@ class ConfigManager:
                     rebuilt.append("embedding_client")
                 except Exception as e:
                     logger.error(f"重建 Embedding 客户端失败: {e}")
+
+            rerank_fields = {
+                "rerank_enabled", "rerank_api_key", "rerank_base_url",
+                "rerank_model", "rerank_top_k_multiplier",
+            }
+            if changed_keys & rerank_fields:
+                try:
+                    self._rerank_client = create_rerank_client(self._config)
+                    rebuilt.append("rerank_client")
+                except Exception as e:
+                    logger.error(f"重建 Rerank 客户端失败: {e}")
+
+            summary_fields = {
+                "summary_use_same_llm", "summary_llm_provider",
+                "summary_llm_api_key", "summary_llm_base_url",
+                "summary_llm_model", "summary_batch_size",
+            }
+            if changed_keys & (summary_fields | llm_fields):
+                try:
+                    self._summary_llm_client = create_summary_llm_client(self._config)
+                    rebuilt.append("summary_llm_client")
+                except Exception as e:
+                    logger.error(f"重建 Summary LLM 客户端失败: {e}")
 
         # 通知注册的回调
         for cb in self._callbacks:
@@ -200,6 +244,21 @@ class ConfigManager:
     def embedding_client(self):
         """返回缓存的 Embedding 客户端单例。"""
         return self._embedding_client
+
+    @property
+    def rerank_client(self):
+        """返回缓存的 Rerank 客户端单例（未启用时为 None）。"""
+        return self._rerank_client
+
+    @property
+    def summary_llm_client(self):
+        """返回缓存的摘要专用 LLM 客户端单例。"""
+        return self._summary_llm_client
+
+    @property
+    def chunking_service(self):
+        """返回缓存的分块服务单例。"""
+        return self._chunking_service
 
     @property
     def version(self) -> int:

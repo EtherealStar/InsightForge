@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://feed.laborinfocn7.com/about/laboreditor251@proton.me",
+  "url": "https://feed.laborinfocn7.com/about/laboreditor251@proton.me",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

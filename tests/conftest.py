@@ -28,8 +28,9 @@ def sample_articles():
 
 
 @pytest.fixture
-def temp_db(tmp_path):
-    return str(tmp_path / "test.db")
+def test_dsn():
+    import os
+    return os.getenv("TEST_PG_DSN", "postgresql://postgres:postgres@localhost:5432/logos_test")
 
 
 @pytest.fixture

@@ -1,0 +1,62 @@
+# Logos 基础设施容器编排
+# 用法: docker compose up -d
+# 只容器化基础设施服务，应用代码在本地 .venv 中运行
+
+services:
+  # PostgreSQL — 文章元数据 + 父 chunk 存储 + 全文搜索
+  postgres:
+    image: postgres:16-alpine
+    platform: linux/amd64
+    container_name: logos-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: logos
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Qdrant — 子 chunk 向量存储 (news_chunks collection)
+  qdrant:
+    image: qdrant/qdrant:latest
+    platform: linux/amd64
+    container_name: logos-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:6333/readyz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Redis — Celery Broker + Result Backend
+  redis:
+    image: redis:7-alpine
+    platform: linux/amd64
+    container_name: logos-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:

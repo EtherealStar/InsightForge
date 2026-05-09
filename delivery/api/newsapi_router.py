@@ -101,21 +101,29 @@ def search_top_headlines(
 def save_article(req: SaveArticleRequest):
     """保存单篇 NewsAPI 的文章到本地数据库及向量库"""
     from core.config_manager import get_config_manager
+    from models.article import Article, Language
+
+    def _parse_published_at(value: str) -> datetime:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.now()
+
+    def _parse_language(value: str) -> Language:
+        normalized = (value or "").lower()
+        if normalized == "zh":
+            return Language.ZH
+        if normalized == "en":
+            return Language.EN
+        return Language.UNKNOWN
+
     try:
-        from models.article import Article, Language
-        
         mgr = get_config_manager()
         article_store = mgr.article_store
-        
-        # 尝试转换日期
-        try:
-            # 格式例如 "2024-03-01T12:00:00Z"
-            pub_date = datetime.fromisoformat(req.published_at.replace("Z", "+00:00"))
-        except:
-            pub_date = datetime.now()
-            
-        lang = Language.ZH if req.language == "zh" else (Language.EN if req.language == "en" else Language.UNKNOWN)
-        
+
+        pub_date = _parse_published_at(req.published_at)
+        lang = _parse_language(req.language)
+
         article = Article(
             title=req.title,
             url=req.url,
@@ -127,30 +135,61 @@ def save_article(req: SaveArticleRequest):
             published_at=pub_date
         )
         
-        # 存数据库
-        saved = article_store.save_articles([article])
-        if not saved:
+        # save_articles 返回的是新增数量，不是文章列表
+        saved_count = article_store.save_articles([article])
+        if saved_count == 0:
             return {"status": "ok", "message": "该文章已经存在"}
-            
-        saved_article = saved[0]
-        
-        # 同步向量化
-        vector_store = mgr.vector_store
-        embedding_client = mgr.embedding_client
-        
-        vector = embedding_client.embed_text(saved_article.title + "\n" + saved_article.content)
-        if vector:
-            vector_store.add_article({
-                "id": saved_article.id,
-                "title": saved_article.title,
-                "content": saved_article.content,
-                "published_at": int(saved_article.published_at.timestamp())
-            }, vector)
-            saved_article.status = "embedded" # mock update, although we didn't save the status change to db here, usually it's tracked by batch update. Let's do batch update if required by schema.
-            # Actually core.models.article defaults to UNPROCESSED. Let's just say it's OK.
-            
-        return {"status": "ok", "message": "保存成功"}
+
+        # 尝试拿到刚保存文章的 id，用于向量化
+        saved_article = None
+        if hasattr(article_store, "get_articles"):
+            candidates = article_store.get_articles(
+                page=1,
+                page_size=10,
+                keyword=req.title,
+            )
+            for candidate in candidates:
+                if candidate.url == req.url:
+                    saved_article = candidate
+                    break
+
+        vectorized = False
+        if saved_article and saved_article.id is not None:
+            try:
+                embedding_client = mgr.embedding_client
+                vector_store = mgr.vector_store
+                chunking_service = mgr.chunking_service
+
+                if chunking_service and embedding_client and vector_store:
+                    # 分块 → 向量化
+                    children, parents = chunking_service.chunk_article(saved_article)
+                    if children:
+                        child_texts = [c.content for c in children]
+                        embeddings = embedding_client.embed(child_texts)
+                        if embeddings:
+                            vector_store.add_chunks(children, embeddings)
+                            if parents:
+                                article_store.save_parent_chunks(parents)
+                            article_store.mark_embedded([saved_article.id])
+                            vectorized = True
+            except Exception:
+                # 向量化失败不影响文章主流程保存
+                vectorized = False
+
+        return {
+            "status": "ok",
+            "message": "保存成功",
+            "saved_count": saved_count,
+            "vectorized": vectorized,
+            "article": {
+                "title": article.title,
+                "url": article.url,
+                "source": article.source,
+                "language": article.language.value,
+                "published_at": (
+                    article.published_at.isoformat() if article.published_at else None
+                ),
+            },
+        }
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"保存失败: {str(e)}")

@@ -2,37 +2,92 @@
   <div class="query-view">
     <div class="page-header">
       <div>
-        <h1>💬 智能问答</h1>
-        <p class="subtitle">基于已收录的新闻库进行 RAG 检索增强回答</p>
+        <h1>🧠 智能助手</h1>
+        <p class="subtitle">自动识别意图 — 快速问答 · 深度研究</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-sm" @click="showReports = !showReports">
+          {{ showReports ? '💬 返回对话' : '📂 研究报告' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 研究报告列表 -->
+    <div v-if="showReports" class="reports-panel card">
+      <div class="reports-header">
+        <h2>📂 研究报告历史</h2>
+        <button v-if="reports.length" class="btn btn-sm btn-danger" @click="batchDeleteReports"
+          :disabled="!selectedReports.length">
+          🗑️ 删除选中 ({{ selectedReports.length }})
+        </button>
+      </div>
+      <div v-if="reports.length" class="reports-list">
+        <div v-for="r in reports" :key="r.filename" class="report-item"
+          :class="{ selected: selectedReports.includes(r.filename) }">
+          <input type="checkbox" :value="r.filename" v-model="selectedReports" />
+          <div class="report-info" @click="viewReport(r.filename)">
+            <span class="report-name">{{ r.filename }}</span>
+            <span class="report-meta">{{ new Date(r.generated_at).toLocaleString() }} · {{ (r.size_bytes / 1024).toFixed(1) }}KB</span>
+          </div>
+          <button class="btn btn-sm" @click="pushReport(r.filename)" title="推送">📤</button>
+        </div>
+      </div>
+      <div v-else class="empty-state"><p>暂无研究报告</p></div>
+
+      <!-- 报告详情 -->
+      <div v-if="viewingReport" class="report-detail card">
+        <div class="report-detail-header">
+          <h3>{{ viewingReport.filename }}</h3>
+          <button class="btn btn-sm" @click="viewingReport = null">✕ 关闭</button>
+        </div>
+        <div class="markdown-body" v-html="renderMarkdown(viewingReport.content)"></div>
       </div>
     </div>
 
     <!-- 对话区域 -->
-    <div class="chat-container card">
+    <div v-else class="chat-container card">
       <div class="chat-messages" ref="messagesRef">
         <div v-if="!messages.length" class="chat-welcome">
-          <div class="welcome-icon">🤖</div>
-          <h2>你好，我是 Logos 新闻助手</h2>
-          <p>我可以根据已收录的新闻为你分析和回答问题</p>
+          <div class="welcome-icon">🧠</div>
+          <h2>你好，我是 Logos 智能助手</h2>
+          <p>我能自动识别你的需求：快速问答或深度研究</p>
+          <div class="mode-hints">
+            <div class="mode-hint">
+              <span class="mode-badge quick">⚡ 快速问答</span>
+              <span>查询新闻、统计数据、新闻库管理</span>
+            </div>
+            <div class="mode-hint">
+              <span class="mode-badge deep">🔬 深度研究</span>
+              <span>说「深度研究/分析/调查/写报告」触发</span>
+            </div>
+          </div>
           <div class="suggestion-chips">
-            <button
-              v-for="q in suggestions"
-              :key="q"
-              class="btn btn-sm"
-              @click="askQuestion(q)"
-            >{{ q }}</button>
+            <button v-for="q in suggestions" :key="q" class="btn btn-sm" @click="askQuestion(q)">{{ q }}</button>
           </div>
         </div>
 
-        <div
-          v-for="(msg, i) in messages"
-          :key="i"
-          :class="['chat-message', msg.role]"
-        >
-          <div class="message-avatar">
-            {{ msg.role === 'user' ? '👤' : '🤖' }}
-          </div>
+        <div v-for="(msg, i) in messages" :key="i" :class="['chat-message', msg.role]">
+          <div class="message-avatar">{{ msg.role === 'user' ? '👤' : '🧠' }}</div>
           <div class="message-content">
+            <div v-if="msg.reasoning && msg.reasoning.length" class="reasoning-block">
+              <div class="reasoning-header" @click="msg.reasoningOpen = !msg.reasoningOpen">
+                <span class="reasoning-toggle">{{ msg.reasoningOpen ? '▼' : '▶' }}</span>
+                <span class="reasoning-icon">🔍</span>
+                <span>推理过程（{{ msg.reasoning.length }} 步）</span>
+              </div>
+              <div v-if="msg.reasoningOpen" class="reasoning-steps">
+                <div v-for="(step, j) in msg.reasoning" :key="j" :class="['reasoning-step', step.event_type]">
+                  <div class="step-icon">{{ stepIcon(step.event_type) }}</div>
+                  <div class="step-content">
+                    <div class="step-label">{{ stepLabel(step.event_type) }}</div>
+                    <div class="step-text" v-if="step.event_type === 'action'">
+                      <code>{{ step.tool_name }}({{ formatToolInput(step.tool_input) }})</code>
+                    </div>
+                    <div class="step-text" v-else>{{ step.content }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div v-if="msg.role === 'assistant'" class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
             <div v-else>{{ msg.content }}</div>
           </div>
@@ -40,29 +95,39 @@
 
         <!-- 流式加载中 -->
         <div v-if="streaming" class="chat-message assistant">
-          <div class="message-avatar">🤖</div>
+          <div class="message-avatar">🧠</div>
           <div class="message-content">
-            <div class="markdown-body" v-html="renderMarkdown(streamContent)"></div>
-            <span class="typing-cursor">▊</span>
+            <div v-if="streamReasoning.length" class="reasoning-block live">
+              <div class="reasoning-header">
+                <span class="reasoning-icon pulse">🔍</span>
+                <span>{{ isDeepResearch ? '深度研究中...' : '正在推理...' }}</span>
+              </div>
+              <div class="reasoning-steps">
+                <div v-for="(step, j) in streamReasoning" :key="j" :class="['reasoning-step', step.event_type]">
+                  <div class="step-icon">{{ stepIcon(step.event_type) }}</div>
+                  <div class="step-content">
+                    <div class="step-label">{{ stepLabel(step.event_type) }}</div>
+                    <div class="step-text" v-if="step.event_type === 'action'">
+                      <code>{{ step.tool_name }}({{ formatToolInput(step.tool_input) }})</code>
+                    </div>
+                    <div class="step-text" v-else>{{ step.content }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-if="streamAnswer" class="markdown-body" v-html="renderMarkdown(streamAnswer)"></div>
+            <span v-if="!streamAnswer" class="typing-cursor">▊</span>
           </div>
         </div>
       </div>
 
       <!-- 输入区 -->
       <div class="chat-input-area">
-        <input
-          v-model="input"
-          class="input chat-input"
-          placeholder="请输入你的问题，例如：今天有什么重要新闻？"
-          @keyup.enter="askQuestion(input)"
-          :disabled="streaming"
-        />
-        <button
-          class="btn btn-primary"
-          @click="askQuestion(input)"
-          :disabled="!input.trim() || streaming"
-        >
-          {{ streaming ? '回答中...' : '发送' }}
+        <input v-model="input" class="input chat-input"
+          :placeholder="inputPlaceholder"
+          @keyup.enter="askQuestion(input)" :disabled="streaming" />
+        <button class="btn btn-primary" @click="askQuestion(input)" :disabled="!input.trim() || streaming">
+          {{ streaming ? (isDeepResearch ? '研究中...' : '推理中...') : '发送' }}
         </button>
       </div>
     </div>
@@ -70,63 +135,90 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
-import { queryApi } from '../api'
+import { ref, nextTick, computed, onMounted } from 'vue'
+import { queryApi, researchApi } from '../api'
 import { marked } from 'marked'
 
 const messages = ref([])
 const input = ref('')
 const streaming = ref(false)
-const streamContent = ref('')
+const streamAnswer = ref('')
+const streamReasoning = ref([])
 const messagesRef = ref(null)
+const showReports = ref(false)
+const reports = ref([])
+const selectedReports = ref([])
+const viewingReport = ref(null)
+
+const DEEP_RESEARCH_KEYWORDS = ['深度研究', '深入分析', '深度分析', '写报告', '写一份报告', '详细调查', '研究报告', '深入研究', '全面分析', '深入调查']
+
+const isDeepResearch = computed(() => {
+  const q = input.value.trim()
+  return DEEP_RESEARCH_KEYWORDS.some(k => q.includes(k))
+})
+
+const inputPlaceholder = computed(() => {
+  if (isDeepResearch.value) return '🔬 将进入深度研究模式...'
+  return '输入问题（快速问答）或包含「深度研究」触发研究模式'
+})
 
 const suggestions = [
   '今天有什么重要新闻？',
   '最近 AI 领域有什么进展？',
-  '总结一下今天的国际新闻',
+  '新闻库里现在有多少文章？',
+  '深度研究：近期人工智能行业发展趋势',
 ]
 
 function renderMarkdown(text) {
   if (!text) return ''
-  try {
-    return marked(text)
-  } catch {
-    return `<p>${text}</p>`
-  }
+  try { return marked(text) } catch { return `<p>${text}</p>` }
+}
+
+function stepIcon(type) {
+  return { thought: '💭', action: '🔧', observation: '📋', error: '❌' }[type] || '•'
+}
+
+function stepLabel(type) {
+  return { thought: '思考', action: '调用工具', observation: '观察结果', error: '错误' }[type] || type
+}
+
+function formatToolInput(inp) {
+  if (!inp) return ''
+  try { return Object.entries(inp).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ') } catch { return String(inp) }
 }
 
 function scrollToBottom() {
-  nextTick(() => {
-    if (messagesRef.value) {
-      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
-    }
-  })
+  nextTick(() => { if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight })
 }
 
 async function askQuestion(question) {
   if (!question?.trim()) return
-
   const q = question.trim()
   input.value = ''
 
-  // 添加用户消息
   messages.value.push({ role: 'user', content: q })
   scrollToBottom()
 
-  // 流式请求
   streaming.value = true
-  streamContent.value = ''
+  streamAnswer.value = ''
+  streamReasoning.value = []
+  const reasoning = []
+
+  // 判断是否深度研究
+  const useDeepResearch = DEEP_RESEARCH_KEYWORDS.some(k => q.includes(k))
 
   try {
-    const response = await queryApi.askStream(q)
+    const response = useDeepResearch
+      ? await researchApi.startStream(q)
+      : await queryApi.askStream(q)
+
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
-
     let buffer = ''
+
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
@@ -134,35 +226,92 @@ async function askQuestion(question) {
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           const data = line.slice(6)
-          if (data === '[DONE]') {
-            break
-          }
-          if (data.startsWith('[ERROR]')) {
-            streamContent.value += '\n\n❌ ' + data.slice(8)
-            break
-          }
-          streamContent.value += data
-          scrollToBottom()
+          if (data === '[DONE]') break
+          try {
+            const event = JSON.parse(data)
+            if (event.event_type === 'answer') {
+              streamAnswer.value = event.content
+            } else if (event.event_type === 'error') {
+              streamAnswer.value += '\n\n❌ ' + event.content
+            } else {
+              reasoning.push(event)
+              streamReasoning.value = [...reasoning]
+            }
+            scrollToBottom()
+          } catch { /* ignore */ }
         }
       }
     }
 
-    // 完成后将流式内容转为正式消息
-    messages.value.push({ role: 'assistant', content: streamContent.value })
+    messages.value.push({
+      role: 'assistant',
+      content: streamAnswer.value,
+      reasoning: reasoning.length > 0 ? [...reasoning] : null,
+      reasoningOpen: false,
+    })
+
+    // 深度研究完成后刷新报告列表
+    if (useDeepResearch) fetchReports()
   } catch (e) {
     messages.value.push({
       role: 'assistant',
       content: `❌ 请求失败: ${e.message}\n\n请检查后端服务是否正常运行。`,
+      reasoning: null, reasoningOpen: false,
     })
   } finally {
     streaming.value = false
-    streamContent.value = ''
+    streamAnswer.value = ''
+    streamReasoning.value = []
     scrollToBottom()
   }
 }
+
+async function fetchReports() {
+  try {
+    const res = await researchApi.list()
+    reports.value = res.data.reports || []
+  } catch { /* silent */ }
+}
+
+async function viewReport(filename) {
+  try {
+    const res = await researchApi.get(filename)
+    viewingReport.value = res.data
+  } catch { /* silent */ }
+}
+
+async function batchDeleteReports() {
+  if (!selectedReports.value.length || !confirm(`确定删除 ${selectedReports.value.length} 份报告？`)) return
+  try {
+    await researchApi.batchDelete(selectedReports.value)
+    selectedReports.value = []
+    fetchReports()
+  } catch { /* silent */ }
+}
+
+async function pushReport(filename) {
+  try {
+    await researchApi.push(filename)
+    alert('推送成功')
+  } catch (e) {
+    alert('推送失败: ' + (e.response?.data?.detail || e.message))
+  }
+}
+
+onMounted(fetchReports)
 </script>
 
 <style scoped>
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.header-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
 .chat-container {
   display: flex;
   flex-direction: column;
@@ -191,13 +340,39 @@ async function askQuestion(question) {
   gap: var(--space-md);
   color: var(--text-secondary);
 }
-.welcome-icon {
-  font-size: 4rem;
-  margin-bottom: var(--space-sm);
+.welcome-icon { font-size: 4rem; margin-bottom: var(--space-sm); }
+.chat-welcome h2 { color: var(--text-primary); }
+
+.mode-hints {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: var(--space-md) 0;
+  font-size: 0.875rem;
 }
-.chat-welcome h2 {
-  color: var(--text-primary);
+.mode-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
 }
+.mode-badge {
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.mode-badge.quick {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.mode-badge.deep {
+  background: rgba(99, 102, 241, 0.15);
+  color: #6366f1;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
 .suggestion-chips {
   display: flex;
   flex-wrap: wrap;
@@ -212,62 +387,113 @@ async function askQuestion(question) {
   max-width: 85%;
   animation: messageIn 0.3s ease;
 }
-.chat-message.user {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-}
-.chat-message.assistant {
-  align-self: flex-start;
-}
-
-@keyframes messageIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+.chat-message.user { align-self: flex-end; flex-direction: row-reverse; }
+.chat-message.assistant { align-self: flex-start; }
+@keyframes messageIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 .message-avatar {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  flex-shrink: 0;
-  background: var(--bg-card);
-  border-radius: 50%;
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.25rem; flex-shrink: 0;
+  background: var(--bg-card); border-radius: 50%;
 }
-
 .message-content {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   padding: var(--space-md) var(--space-lg);
-  font-size: 0.9375rem;
-  line-height: 1.7;
+  font-size: 0.9375rem; line-height: 1.7; min-width: 200px;
 }
 .chat-message.user .message-content {
   background: var(--accent-glow);
   border-color: rgba(245, 158, 11, 0.2);
 }
 
-.typing-cursor {
-  display: inline-block;
-  color: var(--accent-primary);
-  animation: blink 1s infinite;
+/* 推理过程 */
+.reasoning-block {
+  margin-bottom: var(--space-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
 }
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+.reasoning-block.live {
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.03);
+}
+.reasoning-header {
+  display: flex; align-items: center; gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-secondary);
+  cursor: pointer; font-size: 0.85rem; color: var(--text-secondary);
+  user-select: none; transition: background 0.2s;
+}
+.reasoning-header:hover { background: var(--bg-tertiary, var(--bg-secondary)); }
+.reasoning-toggle { font-size: 0.7rem; color: var(--text-secondary); }
+.reasoning-icon { font-size: 1rem; }
+.reasoning-icon.pulse { animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.reasoning-steps { padding: var(--space-sm) var(--space-md); display: flex; flex-direction: column; gap: 6px; }
+.reasoning-step {
+  display: flex; gap: var(--space-sm);
+  font-size: 0.825rem; line-height: 1.5; padding: 4px 0;
+  animation: stepFade 0.3s ease;
+}
+@keyframes stepFade { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+.step-icon { flex-shrink: 0; width: 22px; text-align: center; }
+.step-content { flex: 1; min-width: 0; }
+.step-label { font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+.reasoning-step.thought .step-label { color: #8b5cf6; }
+.reasoning-step.action .step-label { color: #f59e0b; }
+.reasoning-step.observation .step-label { color: #10b981; }
+.reasoning-step.error .step-label { color: #ef4444; }
+.step-text { color: var(--text-secondary); word-break: break-word; }
+.step-text code {
+  background: rgba(99, 102, 241, 0.1); padding: 2px 6px; border-radius: 3px;
+  font-size: 0.8rem; font-family: 'Fira Code', 'Consolas', monospace; color: var(--text-primary);
+}
+.reasoning-step.observation .step-text {
+  max-height: 120px; overflow-y: auto; font-size: 0.8rem; white-space: pre-wrap;
+  background: var(--bg-secondary); padding: 6px 8px; border-radius: var(--radius-sm); margin-top: 2px;
 }
 
+.typing-cursor { display: inline-block; color: var(--accent-primary); animation: blink 1s infinite; }
+@keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+
 .chat-input-area {
-  display: flex;
-  gap: var(--space-md);
+  display: flex; gap: var(--space-md);
   padding: var(--space-md) var(--space-lg);
   border-top: 1px solid var(--border-color);
   background: var(--bg-secondary);
 }
-.chat-input {
-  flex: 1;
+.chat-input { flex: 1; }
+
+/* 研究报告面板 */
+.reports-panel { padding: var(--space-lg); }
+.reports-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: var(--space-lg);
 }
+.reports-list { display: flex; flex-direction: column; gap: var(--space-sm); }
+.report-item {
+  display: flex; align-items: center; gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+  transition: background 0.2s;
+}
+.report-item:hover { background: var(--bg-secondary); }
+.report-item.selected { border-color: var(--accent-primary); background: var(--accent-glow); }
+.report-info { flex: 1; cursor: pointer; display: flex; flex-direction: column; }
+.report-name { font-size: 0.875rem; font-weight: 500; word-break: break-all; }
+.report-meta { font-size: 0.75rem; color: var(--text-muted); }
+
+.report-detail { margin-top: var(--space-lg); max-height: 60vh; overflow-y: auto; }
+.report-detail-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: var(--space-md); border-bottom: 1px solid var(--border-color);
+  position: sticky; top: 0; background: var(--bg-card); z-index: 1;
+}
+.report-detail .markdown-body { padding: var(--space-lg); }
+
+.empty-state { text-align: center; padding: var(--space-xl); color: var(--text-muted); }
 </style>

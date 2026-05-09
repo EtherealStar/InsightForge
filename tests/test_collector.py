@@ -48,13 +48,17 @@ class TestNewsCollector:
             "summary": "Test summary",
         }.get(k, d)
         mock_entry.published_parsed = None
+        mock_entry.author = ""
+        # feedparser entry 没有 content 和 description 属性时
+        del mock_entry.content
+        del mock_entry.description
 
         mock_feed = MagicMock()
         mock_feed.bozo = False
         mock_feed.entries = [mock_entry]
         mock_fp.parse.return_value = mock_feed
 
-        with patch.object(collector, "_extract_full_text", return_value=None):
+        with patch.object(collector, "_extract_full_text", return_value=(None, None)):
             articles = collector.fetch_source("TestFeed", "https://test.com/rss")
 
         assert len(articles) == 1
@@ -88,6 +92,9 @@ class TestNewsCollector:
             "summary": "Good summary",
         }.get(k, d)
         mock_entry.published_parsed = None
+        mock_entry.author = ""
+        del mock_entry.content
+        del mock_entry.description
 
         def side_effect(url):
             if "fail" in url:
@@ -103,7 +110,7 @@ class TestNewsCollector:
 
         mock_fp.parse.side_effect = side_effect
 
-        with patch.object(collector, "_extract_full_text", return_value=None):
+        with patch.object(collector, "_extract_full_text", return_value=(None, None)):
             articles = collector.fetch_all()
 
         # FailFeed 失败但 GoodFeed 成功

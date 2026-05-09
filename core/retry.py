@@ -1,9 +1,9 @@
 """重试与降级工具"""
 import functools
 import time
-import logging
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def with_retry(

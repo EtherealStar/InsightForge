@@ -16,6 +16,9 @@
     </div>
     <h3 class="card-title">{{ article.title }}</h3>
     <p class="card-summary">{{ displaySummary }}</p>
+    <div class="card-tags" v-if="article.tags && article.tags.length">
+      <span v-for="tag in article.tags" :key="tag" class="card-tag">{{ tag }}</span>
+    </div>
     <div class="card-footer">
       <span class="card-status" :class="'badge-' + statusType">{{ statusLabel }}</span>
       <span class="card-link" @click.stop>
@@ -42,12 +45,12 @@ const languageLabel = computed(() => {
 })
 
 const statusType = computed(() => {
-  const map = { embedded: 'success', stored: 'info', raw: 'warning' }
+  const map = { embedded: 'success', summarized: 'success', stored: 'info', pending_summary: 'warning', raw: 'warning' }
   return map[props.article.status] || 'info'
 })
 
 const statusLabel = computed(() => {
-  const map = { embedded: '已向量化', stored: '已存储', raw: '未处理' }
+  const map = { embedded: '已向量化', summarized: '已摘要', stored: '已存储', pending_summary: '待摘要', raw: '未处理' }
   return map[props.article.status] || props.article.status
 })
 
@@ -171,5 +174,20 @@ const timeAgo = computed(() => {
 }
 .card-link a:hover {
   color: var(--accent-primary);
+}
+
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.card-tag {
+  font-size: 0.6875rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-glow);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 </style>

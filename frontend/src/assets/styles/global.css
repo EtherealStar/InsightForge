@@ -104,6 +104,30 @@ h3 { font-size: 1.125rem; }
   background: rgba(239, 68, 68, 0.15);
 }
 
+.btn-secondary {
+  border-color: var(--border-hover);
+  color: var(--text-secondary);
+}
+.btn-secondary:hover {
+  background: var(--bg-secondary);
+}
+
+.btn-accent {
+  background: rgba(139, 92, 246, 0.15);
+  border-color: rgba(139, 92, 246, 0.5);
+  color: #a78bfa;
+  font-weight: 500;
+}
+.btn-accent:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: #a78bfa;
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.2);
+}
+.btn-accent:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-sm {
   padding: var(--space-xs) var(--space-sm);
   font-size: 0.8125rem;

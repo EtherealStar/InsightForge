@@ -1,11 +1,11 @@
 """Embedding 向量生成，使用 OpenAI 格式自定义 API"""
-import logging
+import structlog
 
 from core.protocols import EmbeddingClientProtocol
 from core.retry import with_retry
 from core.exceptions import EmbeddingError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _BATCH_SIZE = 50
 

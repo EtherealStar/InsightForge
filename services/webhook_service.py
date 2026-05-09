@@ -1,6 +1,6 @@
 """Webhook 推送服务 — 支持飞书/钉钉/企业微信/Telegram/ntfy"""
 import json
-import logging
+import structlog
 import os
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -8,7 +8,7 @@ from typing import Optional
 
 import requests
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _DATA_DIR = os.path.join(os.getcwd(), "data")
 _WEBHOOK_CONFIG_PATH = os.path.join(_DATA_DIR, "webhook_config.json")

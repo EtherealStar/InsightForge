@@ -127,8 +127,23 @@
             <input v-model.number="schedule.fetch_interval_hours" type="number" class="input" min="1" max="24" />
           </div>
           <div class="form-group">
+            <label class="form-label">简报生成模式</label>
+            <select v-model="schedule.brief_mode" class="input">
+              <option value="daily">每日固定时间</option>
+              <option value="interval">按间隔周期</option>
+            </select>
+          </div>
+          <div class="form-group" v-if="schedule.brief_mode === 'daily'">
             <label class="form-label">日报生成时间（24h）</label>
             <input v-model.number="schedule.daily_brief_hour" type="number" class="input" min="0" max="23" />
+          </div>
+          <div class="form-group" v-if="schedule.brief_mode === 'interval'">
+            <label class="form-label">简报生成间隔（小时）</label>
+            <input v-model.number="schedule.brief_interval_hours" type="number" class="input" min="1" max="168" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">简报抓取时间范围（小时）</label>
+            <input v-model.number="schedule.brief_fetch_hours" type="number" class="input" min="1" max="10000" />
           </div>
           <div class="form-group">
             <label class="form-label">每次最大抓取数</label>

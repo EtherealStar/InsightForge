@@ -21,15 +21,11 @@
 
         <hr class="divider" />
 
-        <div class="detail-body" v-if="article.html_content || article.content">
-          <iframe 
-            :srcdoc="article.html_content || article.content" 
-            sandbox="allow-same-origin allow-scripts"
-            style="width: 100%; height: 60vh; border: none; background: #fff;"
-          ></iframe>
+        <div class="detail-body" v-if="article.content">
+          <div class="markdown-body" v-html="renderedContent"></div>
         </div>
         <div class="detail-body" v-else-if="article.summary">
-          <div class="markdown-body" v-html="renderedContent"></div>
+          <div class="markdown-body" v-html="renderedSummary"></div>
         </div>
         <div class="detail-body" v-else>
           <p class="text-muted">暂无全文内容</p>
@@ -59,16 +55,21 @@ const formattedDate = computed(() => {
   return new Date(d).toLocaleString('zh-CN')
 })
 
-const fullContent = computed(() => {
-  return props.article.summary || ''
+const renderedContent = computed(() => {
+  const text = props.article.content || ''
+  try {
+    return marked(text)
+  } catch {
+    return `<p>${text}</p>`
+  }
 })
 
-const renderedContent = computed(() => {
-  // 尝试用 markdown 渲染，纯文本也能正常显示
+const renderedSummary = computed(() => {
+  const text = props.article.summary || ''
   try {
-    return marked(fullContent.value)
+    return marked(text)
   } catch {
-    return `<p>${fullContent.value}</p>`
+    return `<p>${text}</p>`
   }
 })
 </script>

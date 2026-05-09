@@ -1,0 +1,18 @@
+{
+  "unique_key": "https://feed.laborinfocn7.com/baotou-steel-explosion",
+  "url": "https://feed.laborinfocn7.com/baotou-steel-explosion/",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "state": 4,
+      "crawlDepth": 1
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": "2026-04-29 18:33:31.798352+00:00"
+}

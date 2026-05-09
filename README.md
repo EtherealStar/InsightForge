@@ -32,26 +32,49 @@ cd ..
 
 ### 3. 启动方式
 
-#### 方式 A：开发模式（推荐开发时使用）
+#### 方式 A：一键启动（推荐 Windows 开发环境）
 
-需要同时启动两个终端：
+在项目根目录下，确保已激活虚拟环境，然后直接运行：
+
+```bash
+start_dev.bat
+```
+
+> **注意**：运行前请确保 Redis 服务已在本地运行（端口 6379）。
+> 脚本会自动打开 5 个独立的命令行窗口，一键启动所有相关服务：
+> - FastAPI 后端服务
+> - Celery Worker 任务节点
+> - Celery Beat 定时触发器
+> - Flower 任务监控面板
+> - Vue 前端开发服务器
+
+浏览器访问 **http://localhost:5173** （前端支持热更新 HMR）
+
+#### 方式 B：手动分布启动（适合非 Windows 或单独调试）
+
+需要同时打开多个终端分别运行：
 
 ```bash
 # 终端 1 — 启动 FastAPI 后端（端口 8000）
-.venv\Scripts\python -m delivery.server
+python -m delivery.server
 
-# 终端 2 — 启动 Vue 前端开发服务器（端口 5173，自动代理 API 到后端）
+# 终端 2 — 启动 Vue 前端开发服务器（端口 5173）
 cd frontend
 pnpm dev
+
+# 终端 3 — 启动 Celery 任务执行节点
+celery -A scheduler.celery_app worker -l info -P threads
+
+# 终端 4 — 启动 Celery 定时触发器
+celery -A scheduler.celery_app beat -l info
+
+# 终端 5 (可选) — 启动 Flower 监控面板 (http://localhost:5555)
+celery -A scheduler.celery_app flower --port=5555
 ```
 
-浏览器访问 **http://localhost:5173**
+#### 方式 C：生产模式（后端托管前端产物）
 
-> 前端开发服务器支持热更新（HMR），修改 Vue 文件后页面自动刷新。
-
-#### 方式 B：生产模式（单进程启动）
-
-先构建前端，再用后端统一托管：
+先构建前端，再用后端统一托管静态文件：
 
 ```bash
 # 构建 Vue 前端（产物输出到 delivery/static/）
@@ -59,20 +82,12 @@ cd frontend
 pnpm build
 cd ..
 
-# 单命令启动（FastAPI 同时托管前端静态文件）
-.venv\Scripts\python -m delivery.server
+# 启动 FastAPI 后端及静态资源托管
+python -m delivery.server
+# 注意生产环境下仍需独立启动 Celery Worker 和 Beat 进程
 ```
 
 浏览器访问 **http://localhost:8000**
-
-### 4. 启动调度器（可选）
-
-调度器是独立进程，负责定时抓取新闻和生成日报：
-
-```bash
-# 新开一个终端
-python -m scheduler.scheduler
-```
 
 ### 5. CLI 调试工具
 

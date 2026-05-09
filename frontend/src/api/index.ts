@@ -1,0 +1,109 @@
+import axios, { AxiosInstance } from 'axios'
+
+const api: AxiosInstance = axios.create({
+  baseURL: '/api',
+  timeout: 60000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+})
+
+// ========== 配置 ==========
+export const configApi = {
+  get: () => api.get('/config'),
+  update: (data: any) => api.put('/config', data),
+  getProviders: () => api.get('/config/providers'),
+  fetchModels: (data: any) => api.post('/config/models', data),
+}
+
+// ========== 功能设置 ==========
+export const settingsApi = {
+  getFeeds: () => api.get('/settings/feeds'),
+  addFeed: (data: any) => api.post('/settings/feeds', data),
+  deleteFeed: (id: string | number) => api.delete(`/settings/feeds/${id}`),
+  getSites: () => api.get('/settings/sites'),
+  addSite: (data: any) => api.post('/settings/sites', data),
+  updateSite: (id: string | number, data: any) => api.put(`/settings/sites/${id}`, data),
+  deleteSite: (id: string | number) => api.delete(`/settings/sites/${id}`),
+  getSchedule: () => api.get('/settings/schedule'),
+  updateSchedule: (data: any) => api.put('/settings/schedule', data),
+}
+
+// ========== 新闻 ==========
+export const newsApi = {
+  getArticles: (params?: any) => api.get('/news', { params }),
+  getArticle: (id: string | number) => api.get(`/news/${id}`),
+  getStats: () => api.get('/news/stats'),
+  getSources: () => api.get('/news/sources'),
+  runPipeline: () => api.post('/news/pipeline'),
+  deleteArticles: (ids: (string | number)[]) => api.post('/news/batch-delete', { article_ids: ids }),
+  resummarize: (ids: (string | number)[]) => api.post('/news/resummarize', { article_ids: ids }),
+}
+
+// ========== NewsAPI ==========
+export const extNewsApi = {
+  searchEverything: (params: any) => api.get('/newsapi/everything', { params }),
+  searchTopHeadlines: (params: any) => api.get('/newsapi/top-headlines', { params }),
+  saveArticle: (data: any) => api.post('/newsapi/save', data),
+}
+
+// ========== 简报 ==========
+export const briefApi = {
+  list: () => api.get('/briefs'),
+  get: (filename: string) => api.get(`/briefs/${filename}`),
+  generate: () => api.post('/briefs/generate'),
+  batchDelete: (filenames: string[]) => api.post('/briefs/batch-delete', { filenames }),
+  batchExport: (filenames: string[]) => api.post('/briefs/batch-export', { filenames }, { responseType: 'blob' }),
+}
+
+// ========== Webhook 推送 ==========
+export const webhookApi = {
+  getPlatforms: () => api.get('/webhook/platforms'),
+  getChannels: () => api.get('/webhook/channels'),
+  addChannel: (data: any) => api.post('/webhook/channels', data),
+  updateChannel: (id: string | number, data: any) => api.put(`/webhook/channels/${id}`, data),
+  deleteChannel: (id: string | number) => api.delete(`/webhook/channels/${id}`),
+  testChannel: (id: string | number) => api.post(`/webhook/channels/${id}/test`),
+  pushAll: () => api.post('/webhook/push'),
+  pushToChannel: (id: string | number) => api.post(`/webhook/push/${id}`),
+  getAutoPush: () => api.get('/webhook/auto-push'),
+  setAutoPush: (enabled: boolean) => api.put('/webhook/auto-push', { auto_push: enabled }),
+}
+
+// ========== AI 问答 (ReAct Agent) ==========
+export const queryApi = {
+  ask: (question: string, topK: number = 10) => api.post('/query', { question, top_k: topK }),
+  askStream: (question: string, topK: number = 10) => {
+    // SSE 流式请求 — ReAct Agent 模式
+    return fetch('/api/query/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, top_k: topK }),
+    })
+  },
+}
+
+// ========== 深度研究 ==========
+export const researchApi = {
+  startStream: (topic: string) => {
+    // SSE 流式深度研究
+    return fetch('/api/research/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic }),
+    })
+  },
+  list: () => api.get('/research'),
+  get: (filename: string) => api.get(`/research/${filename}`),
+  delete: (filename: string) => api.delete(`/research/${filename}`),
+  batchDelete: (filenames: string[]) => api.post('/research/batch-delete', { filenames }),
+  batchExport: (filenames: string[]) => api.post('/research/batch-export', { filenames }, { responseType: 'blob' }),
+  push: (filename: string) => api.post(`/research/push/${filename}`),
+}
+
+// ========== 健康检查 ==========
+export const healthApi = {
+  check: () => api.get('/health'),
+}
+
+export default api
