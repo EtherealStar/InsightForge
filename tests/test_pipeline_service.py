@@ -3,7 +3,6 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from services.pipeline_service import PipelineService
-from infrastructure.article_store import SQLiteArticleStore
 from models.article import Article, Language
 from datetime import datetime
 
@@ -12,8 +11,21 @@ class TestPipelineService:
     """PipelineService 测试"""
 
     @pytest.fixture
-    def store(self, temp_db):
-        return SQLiteArticleStore(temp_db)
+    def store(self):
+        store = MagicMock()
+        store.save_articles.return_value = 1
+        store.get_unembedded.return_value = [
+            Article(
+                id=1,
+                title="Pipeline Test",
+                url="https://example.com/pipeline",
+                content="Pipeline test content",
+                source="PipelineSource",
+                language=Language.EN,
+                published_at=datetime.now(),
+            )
+        ]
+        return store
 
     @pytest.fixture
     def mock_collector(self):
@@ -33,15 +45,28 @@ class TestPipelineService:
     @pytest.fixture
     def mock_vector_store(self):
         vs = MagicMock()
-        vs.add_articles.return_value = 1
+        vs.add_chunks.return_value = 1
         return vs
 
+    @pytest.fixture
+    def mock_chunking_service(self):
+        from models.chunk import Chunk, ParentChunk
+        cs = MagicMock()
+        child = Chunk(chunk_id="c1", article_id=1, parent_chunk_id="p1", content="child chunk", token_count=10, doc_name="test doc")
+        parent = ParentChunk(parent_chunk_id="p1", article_id=1, content="parent chunk", token_count=10, doc_name="test doc")
+        cs.chunk_articles.return_value = ([child], [parent])
+        return cs
+
     def test_pipeline_full_run(
-        self, store, mock_collector, mock_vector_store, mock_embedding_client
+        self, store, mock_collector, mock_vector_store, mock_embedding_client, mock_chunking_service
     ):
         """完整 Pipeline 应成功执行"""
         service = PipelineService(
-            mock_collector, store, mock_vector_store, mock_embedding_client
+            collector=mock_collector, 
+            article_store=store, 
+            vector_store=mock_vector_store, 
+            embedding_client=mock_embedding_client,
+            chunking_service=mock_chunking_service
         )
         result = service.run()
 
@@ -67,14 +92,18 @@ class TestPipelineService:
         assert "抓取" in result["errors"][0]
 
     def test_pipeline_embedding_failure(
-        self, store, mock_collector, mock_vector_store
+        self, store, mock_collector, mock_vector_store, mock_chunking_service
     ):
         """向量化失败应记录错误"""
         bad_embedding = MagicMock()
         bad_embedding.embed.side_effect = Exception("Embedding API error")
 
         service = PipelineService(
-            mock_collector, store, mock_vector_store, bad_embedding
+            collector=mock_collector, 
+            article_store=store, 
+            vector_store=mock_vector_store, 
+            embedding_client=bad_embedding,
+            chunking_service=mock_chunking_service
         )
         result = service.run()
 

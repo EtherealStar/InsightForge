@@ -1,5 +1,7 @@
 # Logos 目标架构文档
 
+> [!WARNING]
+> 此文档为历史设计方案。文中的 SQLite、ChromaDB 和 APScheduler 均已被完全废弃。最新架构请参考项目根目录的 `ARCHITECTURE.md`。
 > **文档版本**：v1.0
 > **基于设计方案**：`full_design.md` v2.0 + `Development Plan.md`
 > **目标阶段**：生产级系统（Full）

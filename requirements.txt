@@ -15,7 +15,6 @@ tavily-python>=0.5.0
 
 # 存储
 psycopg2-binary>=2.9.9
-qdrant-client>=1.9.0
 
 # Markdown 转换
 markdownify>=0.14.1

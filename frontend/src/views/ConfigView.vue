@@ -88,6 +88,11 @@
             <label class="form-label">Embedding 模型名称</label>
             <input v-model="config.embedding_model" class="input" placeholder="text-embedding-3-small" />
           </div>
+          <div class="form-group">
+            <label class="form-label">向量维度</label>
+            <input v-model.number="config.embedding_vector_size" type="number" class="input" min="1" />
+            <span class="field-hint">必须与 Embedding 模型输出维度一致</span>
+          </div>
         </div>
       </section>
 

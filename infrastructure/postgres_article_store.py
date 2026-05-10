@@ -8,10 +8,30 @@ from psycopg2.extras import DictCursor
 
 import jieba
 
-from models.article import Article, Language, ArticleStatus
+from models.article import Article, ArticleMapper, ArticleStatus
 from models.chunk import ParentChunk
 
 logger = structlog.get_logger(__name__)
+
+_ARTICLE_LIST_COLUMNS = """
+    id,
+    url_hash,
+    title,
+    url,
+    CASE
+        WHEN COALESCE(summary, '') = '' THEN LEFT(COALESCE(content, ''), 300)
+        ELSE ''
+    END AS content,
+    '' AS html_content,
+    summary,
+    source,
+    author,
+    language,
+    published_at,
+    created_at,
+    status,
+    tags
+"""
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS articles (
@@ -81,46 +101,7 @@ class PostgresArticleStore:
     @staticmethod
     def _row_to_article(row) -> Article:
         """将数据库行转为 Article 对象"""
-        keys = row.keys()
-
-        published_at = row["published_at"]
-        if isinstance(published_at, str):
-            try:
-                published_at = datetime.fromisoformat(published_at)
-            except (ValueError, TypeError):
-                published_at = None
-
-        created_at = row["created_at"] or datetime.now()
-        if isinstance(created_at, str):
-            try:
-                created_at = datetime.fromisoformat(created_at)
-            except (ValueError, TypeError):
-                pass
-
-        # tags 在 Postgres 中是 JSONB
-        tags = row.get("tags", [])
-        if isinstance(tags, str):
-            try:
-                tags = json.loads(tags)
-            except (json.JSONDecodeError, TypeError):
-                tags = []
-
-        return Article(
-            id=row["id"],
-            url_hash=row["url_hash"],
-            title=row["title"],
-            url=row["url"],
-            content=row["content"] or "",
-            html_content=row["html_content"] if "html_content" in keys and row["html_content"] else "",
-            summary=row["summary"] or "",
-            source=row["source"] or "",
-            author=row["author"] if "author" in keys and row["author"] else "",
-            language=Language(row["language"]) if row["language"] else Language.UNKNOWN,
-            published_at=published_at,
-            created_at=created_at,
-            tags=tags,
-            status=ArticleStatus(row["status"]) if row["status"] else ArticleStatus.STORED,
-        )
+        return ArticleMapper.row_to_entity(row)
 
     def save_articles(self, articles: list[Article]) -> int:
         """
@@ -347,7 +328,9 @@ class PostgresArticleStore:
         with self._get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"SELECT * FROM articles {where} ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                    f"""SELECT {_ARTICLE_LIST_COLUMNS}
+                        FROM articles {where}
+                        ORDER BY created_at DESC LIMIT %s OFFSET %s""",
                     tuple(params),
                 )
                 rows = cur.fetchall()

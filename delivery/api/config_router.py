@@ -18,6 +18,7 @@ class ConfigResponse(BaseModel):
     embedding_api_key: str
     embedding_base_url: str
     embedding_model: str
+    embedding_vector_size: int
     rerank_enabled: bool
     rerank_api_key: str
     rerank_base_url: str
@@ -46,6 +47,7 @@ class ConfigUpdate(BaseModel):
     embedding_api_key: str = ""
     embedding_base_url: str = ""
     embedding_model: str = ""
+    embedding_vector_size: int = 1536
     rerank_enabled: bool = False
     rerank_api_key: str = ""
     rerank_base_url: str = ""
@@ -131,6 +133,7 @@ def get_config():
         embedding_api_key=_mask_key(env.get("EMBEDDING_API_KEY", "")),
         embedding_base_url=env.get("EMBEDDING_BASE_URL", ""),
         embedding_model=env.get("EMBEDDING_MODEL", ""),
+        embedding_vector_size=int(env.get("EMBEDDING_VECTOR_SIZE", "1536")),
         rerank_enabled=env.get("RERANK_ENABLED", "false").lower() in ("true", "1", "yes"),
         rerank_api_key=_mask_key(env.get("RERANK_API_KEY", "")),
         rerank_base_url=env.get("RERANK_BASE_URL", ""),
@@ -167,6 +170,7 @@ def update_config(config: ConfigUpdate):
         "embedding_api_key": "EMBEDDING_API_KEY",
         "embedding_base_url": "EMBEDDING_BASE_URL",
         "embedding_model": "EMBEDDING_MODEL",
+        "embedding_vector_size": "EMBEDDING_VECTOR_SIZE",
         "rerank_enabled": "RERANK_ENABLED",
         "rerank_api_key": "RERANK_API_KEY",
         "rerank_base_url": "RERANK_BASE_URL",
@@ -291,4 +295,3 @@ def fetch_models(req: ModelFetchRequest):
         raise HTTPException(status_code=400, detail="当前提供商不支持在线获取模型列表，请手动输入")
         
     return {"models": models}
-

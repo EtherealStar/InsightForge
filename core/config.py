@@ -34,9 +34,6 @@ class AppConfig(BaseSettings):
 
     # --- 存储 ---
     pg_dsn: str = "postgresql://postgres:postgres@localhost:5432/logos"
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_api_key: str = ""
-    qdrant_collection_name: str = "news_articles"
     markdown_output_path: str = "data/markdown"
     output_path: str = "output"
 
@@ -86,7 +83,7 @@ class AppConfig(BaseSettings):
     chunk_max_child_tokens: int = 512          # 子 chunk 最大 token 数
     chunk_target_parent_tokens: int = 1024     # 父 chunk 目标 token 数
     chunk_overlap_tokens: int = 100            # 父 chunk 之间的 overlap token 数
-    qdrant_chunk_collection_name: str = "news_chunks"  # chunk 向量 collection
+    embedding_vector_size: int = 1536          # pgvector embedding 维度
 
     # --- 混合检索配置 ---
     hybrid_search_enabled: bool = True           # 是否启用混合检索（False=退化为纯向量检索）
@@ -106,4 +103,8 @@ class AppConfig(BaseSettings):
             )
         return v
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )

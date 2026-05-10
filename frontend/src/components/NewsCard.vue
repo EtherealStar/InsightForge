@@ -55,7 +55,7 @@ const statusLabel = computed(() => {
 })
 
 const displaySummary = computed(() => {
-  const text = props.article.summary || props.article.content || ''
+  const text = props.article.summary || props.article.content_preview || props.article.content || ''
   return text.length > 150 ? text.slice(0, 150) + '...' : text
 })
 

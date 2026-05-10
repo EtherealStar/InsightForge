@@ -1,6 +1,6 @@
 """内置工具：获取最近 N 小时的新闻列表
 
-直接从 SQLite 数据库按时间查询最新文章。
+直接从 PostgreSQL 数据库按时间查询最新文章。
 """
 
 import structlog

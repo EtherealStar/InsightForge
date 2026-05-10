@@ -1,4 +1,4 @@
-"""SQLiteArticleStore 单元测试"""
+"""PostgresArticleStore 单元测试"""
 import pytest
 from datetime import datetime, timedelta
 

@@ -1,6 +1,6 @@
 """混合检索服务：向量语义搜索 + 关键词全文搜索 + RRF 融合
 
-编排向量检索（Qdrant）和关键词检索（PostgreSQL FTS）两路结果，
+编排向量检索（PostgreSQL/pgvector）和关键词检索（PostgreSQL FTS）两路结果，
 使用 Reciprocal Rank Fusion (RRF) 算法融合排名，
 输出统一的排序结果。
 

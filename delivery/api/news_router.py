@@ -2,18 +2,31 @@
 import structlog
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from datetime import datetime
 
 router = APIRouter(prefix="/api/news", tags=["news"])
 logger = structlog.get_logger(__name__)
 
 
-class ArticleResponse(BaseModel):
+class ArticleListItemResponse(BaseModel):
+    id: int | None
+    title: str
+    url: str
+    summary: str
+    content_preview: str
+    source: str
+    author: str
+    language: str
+    published_at: str | None
+    created_at: str
+    status: str
+    tags: list[str]
+
+
+class ArticleDetailResponse(BaseModel):
     id: int | None
     title: str
     url: str
     content: str
-    html_content: str
     summary: str
     source: str
     author: str
@@ -25,7 +38,7 @@ class ArticleResponse(BaseModel):
 
 
 class ArticleListResponse(BaseModel):
-    articles: list[ArticleResponse]
+    articles: list[ArticleListItemResponse]
     total: int
     page: int
     page_size: int
@@ -35,20 +48,48 @@ class BatchDeleteRequest(BaseModel):
     article_ids: list[int]
 
 
-def _article_to_response(article) -> ArticleResponse:
-    return ArticleResponse(
+def _language_value(article) -> str:
+    return (
+        article.language.value
+        if hasattr(article.language, "value")
+        else str(article.language)
+    )
+
+
+def _status_value(article) -> str:
+    return article.status.value if hasattr(article.status, "value") else str(article.status)
+
+
+def _article_to_list_item(article) -> ArticleListItemResponse:
+    return ArticleListItemResponse(
+        id=article.id,
+        title=article.title,
+        url=article.url,
+        summary=article.summary,
+        content_preview=article.content or "",
+        source=article.source,
+        author=article.author or "",
+        language=_language_value(article),
+        published_at=article.published_at.isoformat() if article.published_at else None,
+        created_at=article.created_at.isoformat() if article.created_at else "",
+        status=_status_value(article),
+        tags=article.tags or [],
+    )
+
+
+def _article_to_detail_response(article) -> ArticleDetailResponse:
+    return ArticleDetailResponse(
         id=article.id,
         title=article.title,
         url=article.url,
         content=article.content,
-        html_content=article.html_content or "",
         summary=article.summary,
         source=article.source,
         author=article.author or "",
-        language=article.language.value if hasattr(article.language, 'value') else str(article.language),
+        language=_language_value(article),
         published_at=article.published_at.isoformat() if article.published_at else None,
         created_at=article.created_at.isoformat() if article.created_at else "",
-        status=article.status.value if hasattr(article.status, 'value') else str(article.status),
+        status=_status_value(article),
         tags=article.tags or [],
     )
 
@@ -81,7 +122,7 @@ def get_articles(
     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
 
     return ArticleListResponse(
-        articles=[_article_to_response(a) for a in articles],
+        articles=[_article_to_list_item(a) for a in articles],
         total=total,
         page=page,
         page_size=page_size,
@@ -131,7 +172,7 @@ def batch_delete_articles(req: BatchDeleteRequest):
     try:
         mgr.vector_store.delete_by_article_ids(req.article_ids)
     except Exception as e:
-        logger.error(f"同步删除 Qdrant chunk 向量记录未遂，不阻碍主流程: {e}")
+        logger.error(f"同步删除 pgvector child chunk 记录未遂，不阻碍主流程: {e}")
 
     try:
         store.delete_parent_chunks_by_article_ids(req.article_ids)
@@ -171,11 +212,11 @@ def resummarize_articles(req: ResummarizeRequest):
         raise HTTPException(status_code=500, detail=f"AI 重新摘要失败: {e}")
 
 
-@router.get("/{article_id}", response_model=ArticleResponse)
+@router.get("/{article_id}", response_model=ArticleDetailResponse)
 def get_article(article_id: int):
     """获取单篇新闻全文"""
     _, store = _get_article_store()
     article = store.get_article_by_id(article_id)
     if not article:
         raise HTTPException(status_code=404, detail="未找到该文章")
-    return _article_to_response(article)
+    return _article_to_detail_response(article)

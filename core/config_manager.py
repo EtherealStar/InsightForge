@@ -147,7 +147,7 @@ class ConfigManager:
         }
         embed_fields = {"embedding_api_key", "embedding_base_url", "embedding_model"}
         store_fields = {"pg_dsn"}
-        vector_fields = {"qdrant_url", "qdrant_api_key", "qdrant_chunk_collection_name"}
+        vector_fields = {"pg_dsn", "embedding_vector_size"}
 
         changed_keys = set(changes.keys())
         rebuilt: list[str] = []

@@ -1,0 +1,407 @@
+# Logos 架构文档
+
+> **项目阶段**：Demo+ （前后端分离架构 + ReAct Agent + 深度研究 + Web 搜索 + AI 摘要 + Rerank + 混合检索 RAG + Webhook 推送）
+
+---
+
+## 最近架构变更
+
+| 时间 | 变更 | 摘要 |
+|---|---|---|
+| 2026-05 | pgvector 统一存储 | 移除 Qdrant，子 chunk 向量并入 PostgreSQL |
+| 2026-05 | 混合检索 + RRF | 向量+关键词双通道 + jieba 中文分词 + Reciprocal Rank Fusion |
+| 2026-05 | 父子分块 RAG | Markdown 感知分块，子 chunk→pgvector 检索，父 chunk→PostgreSQL 召回 |
+| 2026-05 | 基础设施迁移 | SQLite→PostgreSQL, APScheduler→Celery+Redis, Docker Compose |
+
+→ 完整变更历史：[docs/design-docs/changelog.md](docs/design-docs/changelog.md)
+
+---
+
+## 1. 系统概览
+
+Logos 是一个**个人 AI 新闻分析助手**，具备以下核心能力：
+
+1. **定时 Pipeline**：自动从多个数据源（RSS + 网页爬取）抓取内容 → Markdown 转换 + 元数据提取 → 去重存储 → AI 摘要打标签 → 父子分块 + 向量化 + jieba 分词全文索引 → 每日自动生成新闻简报
+2. **ReAct Agent 问答**：用户通过自然语言提问，ReAct Agent 自主推理并决策调用工具（语义检索、统计查询、全文阅读、Web 搜索、简报生成等），基于工具返回的真实数据生成回答
+3. **深度研究**：专用深度研究模式，Agent 使用更多推理步数（max_steps=15）执行多步研究任务，自动保存研究报告
+4. **Web 搜索**：多搜索引擎并发搜索（DuckDuckGo + Tavily），程序化去重聚合
+5. **NewsAPI 在线搜索**：代理 NewsAPI 接口，支持全球新闻搜索和热门头条
+6. **Webhook 推送**：将新闻简报/研究报告通过 Webhook 推送到飞书、钉钉、企业微信、Telegram、ntfy 等平台
+7. **Agent 工具系统**：完整的工具定义、注册、编排、执行基础设施 + 6 个内置工具 + ReAct 推理-行动循环核心
+
+当前系统为**前后端分离架构**（Vue 3 + FastAPI）。
+
+---
+
+## 2. 技术选型
+
+| 模块 | 选型 | 一句话理由 |
+|---|---|---|
+| 后端语言 | Python 3.11+ | 后端全栈，AI 生态完善 |
+| 前端 | Vue 3 + Vite 6 | 轻量 SPA，开发效率高 |
+| Web 框架 | FastAPI + Uvicorn | 异步 REST + SSE 流式支持 |
+| 元数据存储 | PostgreSQL 16 | 并发写入 + JSONB + tsvector 全文搜索 |
+| 向量数据库 | PostgreSQL + pgvector | 单库持久化 + cosine 检索 |
+| 任务调度 | Celery + Redis | 分布式异步执行 + Flower 监控 |
+| LLM | openai/gemini/anthropic SDK | 4 种后端统一 Protocol |
+| 检索 | HybridSearchService + RRF | 向量+关键词双通道融合 |
+| 分块 | tiktoken + ChunkingService | Markdown 感知的父子分块 |
+| 日志 | structlog | 结构化 JSON + request_id 追踪 |
+
+→ 完整选型论证与 ADR：[docs/design-docs/tech-decisions.md](docs/design-docs/tech-decisions.md)
+
+---
+
+## 3. 分层架构
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                        前端表现层 (Frontend)                        │
+│   Vue 3 SPA: NewsView │ BriefView │ NewsApiView │ QueryView       │
+│              WebhookView │ SettingsView │ ConfigView               │
+│   通过 Axios 调用 /api/* 端点                                      │
+├────────────────────────────────────────────────────────────────────┤
+│                     后端表现层 (Delivery)                           │
+│   FastAPI Server (server.py) — 9 个路由模块 + CLI 调试工具         │
+├────────────────────────────────────────────────────────────────────┤
+│                  Agent 智能体层 (Agent/React + Tools)                │
+│   ReActAgent (推理-行动循环)  │  ToolRegistry (注册中心)           │
+│   6 个内置工具               │  ToolChain / AsyncToolExecutor     │
+├────────────────────────────────────────────────────────────────────┤
+│                     应用服务层 (Services)                           │
+│   PipelineService │ QueryService │ BriefService │ WebhookService   │
+│   SummaryService  │ WebSearchService │ DeepResearchService         │
+├────────────────────────────────────────────────────────────────────┤
+│                     领域模型层 (Models)                             │
+│   ArticleEntity/DTO │ DailyBrief │ Chunk │ ParentChunk │ SearchResult │
+├────────────────────────────────────────────────────────────────────┤
+│                    基础设施层 (Infrastructure)                      │
+│   PostgresArticleStore │ PgVectorStore │ ChunkingService        │
+│   HybridSearchService  │ 4×LLMClient │ EmbeddingClient            │
+│   NewsCollector │ WebCrawler │ WebSearchClients │ RerankClient     │
+├────────────────────────────────────────────────────────────────────┤
+│                    横切关注点 (Core)                                │
+│   AppConfig │ Protocols (5) │ Factory (8) │ ConfigManager          │
+│   Exceptions │ Logging │ Retry                                     │
+├────────────────────────────────────────────────────────────────────┤
+│                     调度层 (Scheduler)                              │
+│   Celery + Redis — Beat 定时触发 │ Worker 异步执行                 │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+**层间依赖规则**（严格单向）：
+- Frontend → Delivery（HTTP API）
+- Delivery → Agent/Tools → Services → Infrastructure
+- Agent/Tools 通过 BaseTool 子类调用 Services 层
+- Infrastructure 实现 Core/Protocols 定义的接口
+- Models 是纯数据层，被所有层引用
+- Core 被所有层引用
+
+---
+
+## 4. 目录结构
+
+```
+Logos/
+├── core/                           # 横切关注点
+│   ├── config.py                   # AppConfig (pydantic-settings)
+│   ├── config_manager.py           # ConfigManager 热重载单例
+│   ├── protocols.py                # 5 个 Protocol 接口契约
+│   ├── factory.py                  # 8 个工厂函数
+│   ├── exceptions.py               # 统一异常层次
+│   ├── logging.py                  # structlog 配置
+│   └── retry.py                    # @with_retry 指数退避
+│
+├── models/                         # 领域模型 (纯 dataclass)
+│   ├── article.py                  # ArticleEntity + ArticleDTO + Mapper
+│   ├── brief.py                    # DailyBrief
+│   ├── chunk.py                    # Chunk + ParentChunk
+│   └── search.py                   # SearchQuery + SearchResult + ChunkSearchResult
+│
+├── infrastructure/                 # 基础设施层 (实现 Protocol)
+│   ├── collector.py                # NewsCollector (feedparser + trafilatura)
+│   ├── postgres_article_store.py   # PostgresArticleStore
+│   ├── pgvector_store.py           # PgVectorStore (chunk 级别)
+│   ├── chunking_service.py         # ChunkingService (Markdown 父子分块)
+│   ├── keyword_search_service.py   # KeywordSearchService (PostgreSQL FTS)
+│   ├── hybrid_search_service.py    # HybridSearchService (RRF 混合检索)
+│   ├── llm_client.py               # 4 个 LLM 客户端
+│   ├── embedding_client.py         # OpenAICompatibleEmbeddingClient
+│   ├── rerank_client.py            # OpenAICompatibleRerankClient
+│   ├── markdown_converter.py       # NewsMarkdownConverter
+│   ├── web_crawler.py              # WebCrawler (Crawlee)
+│   └── web_search_client.py        # DuckDuckGo + Tavily
+│
+├── services/                       # 应用服务层
+│   ├── pipeline_service.py         # 抓取→存储→摘要→分块→向量化
+│   ├── query_service.py            # ReAct Agent 问答入口
+│   ├── brief_service.py            # 日报生成
+│   ├── webhook_service.py          # 多平台推送
+│   ├── summary_service.py          # AI 批量摘要
+│   ├── web_search_service.py       # 多引擎并发搜索
+│   └── deep_research_service.py    # 深度研究报告
+│
+├── agent/                          # Agent 智能体层
+│   ├── react/                      # ReAct 推理-行动循环
+│   │   ├── agent.py                # ReActAgent + AgentEvent + AgentResult
+│   │   ├── parser.py               # LLM 输出解析器
+│   │   └── prompts.py              # System prompt 模板
+│   └── tools/                      # 工具系统
+│       ├── base.py                 # BaseTool 抽象基类
+│       ├── registry.py             # ToolRegistry 线程安全单例
+│       ├── chain.py                # ToolChain 链式编排
+│       ├── executor.py             # AsyncToolExecutor
+│       └── builtin/                # 6 个内置工具
+│
+├── delivery/                       # 后端表现层
+│   ├── server.py                   # FastAPI 应用入口
+│   ├── cli.py                      # CLI 调试工具
+│   └── api/                        # 9 个路由模块
+│
+├── scheduler/                      # 调度层 (Celery)
+│   ├── celery_app.py               # Celery 配置 + Beat 规则
+│   └── tasks.py                    # 异步任务定义
+│
+├── frontend/                       # Vue 3 前端
+│   └── src/
+│       ├── views/                  # 7 个页面组件
+│       ├── components/             # 通用组件
+│       └── api/                    # Axios API 封装
+│
+├── docs/                           # 项目文档
+│   ├── design-docs/                # 详细设计文档
+│   ├── exec-plans/                 # 执行计划 (active/ + completed/)
+│   ├── generated/                  # 生成文档 (DB Schema 等)
+│   ├── product-specs/              # 产品规格 (API 参考等)
+│   ├── references/                 # 参考资料 (外部依赖等)
+│   ├── DESIGN.md                   # 设计哲学概述
+│   └── PLANS.md                    # 开发路线图
+│
+├── tests/                          # 测试
+├── data/                           # 运行时数据 (.gitignore)
+├── output/                         # 日报 + 研究报告
+├── docker-compose.yml              # 基础设施容器编排
+├── ARCHITECTURE.md                 # 本文档
+└── AGENTS.md                       # AI 编码助手上下文
+```
+
+---
+
+## 5. 核心接口契约 (Protocol)
+
+系统通过 5 个 `typing.Protocol` 定义接口，实现基础设施层的可替换性：
+
+| Protocol | 核心方法 | 当前实现 |
+|---|---|---|
+| `ArticleStoreProtocol` | `save_articles`, `get_unembedded`, `mark_embedded`, `search_by_keyword`, `get_recent`, `get_stats`, `cleanup_old_articles` | `PostgresArticleStore` |
+| `VectorStoreProtocol` | `add_chunks`, `search_chunks`, `delete_by_article_ids` | `PgVectorStore` |
+| `LLMClientProtocol` | `generate`, `generate_stream`, `generate_with_history`, `generate_with_history_stream` | 4 个客户端 |
+| `EmbeddingClientProtocol` | `embed` | `OpenAICompatibleEmbeddingClient` |
+| `RerankClientProtocol` | `rerank` | `OpenAICompatibleRerankClient` |
+
+→ 完整接口设计与实现说明：[docs/design-docs/protocol-contracts.md](docs/design-docs/protocol-contracts.md)
+
+---
+
+## 6. 数据流架构
+
+### 6.1 Pipeline 数据流（定时/手动触发）
+
+```
+数据源 (RSS + 网页爬虫)
+    → NewsCollector.fetch_all() + WebCrawler.crawl_all()
+    → NewsMarkdownConverter.convert_batch()     HTML→Markdown
+    → PostgresArticleStore.save_articles()      SHA256 去重
+    → SummaryService.summarize_pending()        LLM 摘要+标签
+    → ChunkingService.chunk_articles()          父子分块
+    → EmbeddingClient.embed()                   子 chunk 向量化
+    → PgVectorStore.add_chunks()                写入 PostgreSQL child_chunks
+    → PostgresArticleStore.save_parent_chunks() 写入 PostgreSQL parent_chunks
+    → mark_embedded()                           ✓ 完成
+```
+
+### 6.2 ReAct Agent 问答数据流
+
+```
+用户问题 → QueryService.answer_agent_stream()
+    → ReActAgent.run_stream(question)
+    → while steps < max_steps:
+        → LLM.generate_with_history(messages)
+        → ReActParser.parse() → Thought / Action / Answer
+        → [Action] → ToolRegistry.get(tool).execute(**params)
+        → yield AgentEvent → SSE 传输到前端
+```
+
+### 6.3 混合检索数据流
+
+```
+查询 → ┌─ 向量检索: Embedding → pgvector search_chunks → 子→父去重排名
+       └─ 关键词检索: jieba 分词 → PostgreSQL tsvector @@ query
+       → RRF 融合 (k=60, 加权)
+       → PostgreSQL get_parent_chunks_by_ids()
+       → [可选] Rerank 精排
+       → 最终 top_k 父 chunks → LLM
+```
+
+**检索模式**：`hybrid`（默认）| `semantic` | `keyword`
+**降级策略**：任一通道失败 → 使用另一通道 → 双失败 → 回退文章级 ILIKE
+
+### 6.4 简报生成 + 推送
+
+```
+触发 → BriefService.generate(hours=24)
+     → get_recent() → 格式化 context → LLM 生成 → 保存 .md
+     → [auto_push?] → WebhookService.broadcast()
+     → 飞书/钉钉/企业微信/Telegram/ntfy
+```
+
+### 6.5 深度研究
+
+```
+研究主题 → DeepResearchService.research_stream()
+         → ReActAgent (max_steps=15, 专用 prompt)
+         → 多步: 搜知识库 → 读全文 → Web 搜索 → 综合报告
+         → 自动保存 output/research/
+```
+
+→ 完整 API 路由参考：[docs/product-specs/api-reference.md](docs/product-specs/api-reference.md)
+
+---
+
+## 7. 数据模型
+
+### 核心实体关系
+
+```
+Article (1) ──→ (N) Chunk (子分块, PostgreSQL/pgvector)
+Article (1) ──→ (N) ParentChunk (父分块, PostgreSQL)
+Chunk (N)   ──→ (1) ParentChunk (通过 parent_chunk_id)
+```
+
+| 实体 | 存储 | 用途 |
+|---|---|---|
+| `ArticleEntity` / `ArticleDTO` | PostgreSQL `articles` | 文章元数据 + 全文 |
+| `ParentChunk` | PostgreSQL `parent_chunks` | LLM 召回上下文 + 全文索引 |
+| `Chunk` | PostgreSQL `child_chunks` | 向量检索单元 |
+
+→ 完整 Schema 与 DDL：[docs/generated/db-schema.md](docs/generated/db-schema.md)
+
+---
+
+## 8. 配置管理
+
+| 配置项 | 存储位置 | 管理方式 |
+|---|---|---|
+| LLM/Embedding/Rerank API | `.env` | 前端 ConfigView 通过 API 读写 |
+| RSS 源列表 | `data/feeds_config.json` | 前端 SettingsView |
+| 爬虫源列表 | `data/sites_config.json` | 前端 SettingsView |
+| 推送渠道 | `data/webhook_config.json` | 前端 WebhookView |
+| 应用默认值 | `core/config.py` | pydantic Field default |
+
+→ 完整字段参考：[docs/references/external-deps.md](docs/references/external-deps.md)
+
+---
+
+## 9. 异常层次
+
+```
+NewsAssistantError (基础异常)
+├── CollectorError → SourceUnavailableError
+├── StoreError
+├── EmbeddingError
+├── RerankError
+├── LLMError → RateLimitError
+├── ConfigError
+└── ToolError
+    ├── ToolNotFoundError
+    ├── ToolValidationError
+    ├── ToolExecutionError
+    ├── ToolTimeoutError
+    └── ToolChainError
+```
+
+所有外部调用通过 `@with_retry` 自动指数退避重试（默认 3 次，基数 2.0）。
+
+---
+
+## 10. 进程模型
+
+```
+=== 基础设施层 (docker compose up -d) ===
+  容器 1: logos-postgres  (:5432)  — 文章 + 父/子 chunk + 向量 + 全文索引
+  容器 2: logos-redis     (:6379)  — Celery Broker
+
+=== 应用层 (start_dev.bat) ===
+  进程 1: FastAPI Server  (:8005)  — 处理 /api/* 请求
+  进程 2: Celery Worker            — 异步任务执行
+  进程 3: Celery Beat              — 定时触发
+  进程 4: Vite Dev Server (:5173)  — 前端开发（开发模式）
+```
+
+进程间数据共享：PostgreSQL + 文件系统。
+
+---
+
+## 11. 依赖注入
+
+系统使用**工厂函数**（`core/factory.py`）+ **ConfigManager 单例**：
+
+```python
+# 8 个工厂函数
+create_article_store(config)     → PostgresArticleStore
+create_vector_store(config)      → PgVectorStore
+create_llm_client(config)        → LLMClient (按 provider 选择)
+create_embedding_client(config)  → OpenAICompatibleEmbeddingClient
+create_rerank_client(config)     → RerankClient | None
+create_summary_llm_client(config)→ LLMClient (可复用主 LLM)
+create_chunking_service(config)  → ChunkingService
+
+# ConfigManager 缓存实例，reload() 支持热重载
+```
+
+→ Agent 智能体层详细设计：[docs/design-docs/react-agent.md](docs/design-docs/react-agent.md)
+
+---
+
+## 12. 当前已知局限性
+
+| 局限 | 影响 | 改进方向 |
+|---|---|---|
+| 无 Celery 重试补偿 | 任务失败无自动恢复 | Celery Task Retries |
+| RSS 串行抓取 | 源多时抓取慢 | ThreadPoolExecutor 并发 |
+| 单环境 .env | 无 dev/prod 区分 | 多环境 .env |
+| 无认证/授权 | API 完全开放 | 认证中间件 |
+| structlog 已引入但部分模块待迁移 | 日志格式不统一 | 全局迁移 |
+
+→ 完整问题清单：[docs/exec-plans/tech-debt-tracker.md](docs/exec-plans/tech-debt-tracker.md)
+
+---
+
+## 13. 运行方式
+
+```bash
+# 1. 安装依赖
+pip install -r requirements.txt
+cd frontend && pnpm install && cd ..
+
+# 2. 配置环境变量
+cp .env.example .env
+# 编辑 .env 填入 API Key
+
+# 3. 启动基础设施
+docker compose up -d
+
+# 4. 一键启动所有服务 (Windows)
+./start_dev.bat
+
+# 或分别启动:
+python -m delivery.server              # 后端
+cd frontend && pnpm dev                # 前端
+celery -A scheduler.celery_app worker -l info -P threads  # Worker
+celery -A scheduler.celery_app beat -l info                # Beat
+
+# CLI 调试
+python -m delivery.cli pipeline
+python -m delivery.cli ask "今天有什么重要新闻？"
+python -m delivery.cli stats
+```

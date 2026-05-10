@@ -61,6 +61,5 @@ def setup_logging(level: str = "INFO", log_file: str | None = None):
         root_logger.addHandler(h)
 
     # 降低第三方库噪音
-    for lib in ("httpx", "chromadb", "httpcore", "urllib3", "qdrant_client", "psycopg2"):
+    for lib in ("httpx", "chromadb", "httpcore", "urllib3", "psycopg2"):
         logging.getLogger(lib).setLevel(logging.WARNING)
-

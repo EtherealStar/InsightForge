@@ -55,22 +55,60 @@ const formattedDate = computed(() => {
   return new Date(d).toLocaleString('zh-CN')
 })
 
-const renderedContent = computed(() => {
-  const text = props.article.content || ''
-  try {
-    return marked(text)
-  } catch {
-    return `<p>${text}</p>`
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function sanitizeHtml(html) {
+  const template = document.createElement('template')
+  template.innerHTML = html
+
+  const blockedTags = new Set(['script', 'style', 'iframe', 'object', 'embed', 'form'])
+  const urlAttributes = new Set(['href', 'src', 'xlink:href'])
+  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT)
+  const nodes = []
+  while (walker.nextNode()) nodes.push(walker.currentNode)
+
+  for (const node of nodes) {
+    const tagName = node.tagName.toLowerCase()
+    if (blockedTags.has(tagName)) {
+      node.remove()
+      continue
+    }
+
+    for (const attr of [...node.attributes]) {
+      const name = attr.name.toLowerCase()
+      const value = attr.value.trim().toLowerCase()
+      const unsafeUrl = urlAttributes.has(name) &&
+        (value.startsWith('javascript:') || value.startsWith('data:text/html'))
+      if (name.startsWith('on') || name === 'style' || name === 'srcdoc' || unsafeUrl) {
+        node.removeAttribute(attr.name)
+      }
+    }
   }
+
+  return template.innerHTML
+}
+
+function renderMarkdown(text) {
+  try {
+    return sanitizeHtml(marked.parse(text || '', { async: false }))
+  } catch {
+    return `<p>${escapeHtml(text || '')}</p>`
+  }
+}
+
+const renderedContent = computed(() => {
+  return renderMarkdown(props.article.content || '')
 })
 
 const renderedSummary = computed(() => {
-  const text = props.article.summary || ''
-  try {
-    return marked(text)
-  } catch {
-    return `<p>${text}</p>`
-  }
+  return renderMarkdown(props.article.summary || '')
 })
 </script>
 

@@ -15,12 +15,11 @@ def create_article_store(config: AppConfig) -> ArticleStoreProtocol:
 
 
 def create_vector_store(config: AppConfig) -> VectorStoreProtocol:
-    from infrastructure.qdrant_vector_store import QdrantVectorStore
+    from infrastructure.pgvector_store import PgVectorStore
 
-    return QdrantVectorStore(
-        url=config.qdrant_url,
-        api_key=config.qdrant_api_key,
-        collection_name=config.qdrant_chunk_collection_name,
+    return PgVectorStore(
+        dsn=config.pg_dsn,
+        vector_size=config.embedding_vector_size,
     )
 
 

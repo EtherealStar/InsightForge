@@ -1,5 +1,7 @@
 # Logos 个人新闻分析助手 — 完整方案（v2）
 
+> [!WARNING]
+> 此文档为历史设计方案。文中的 SQLite、ChromaDB 和 APScheduler 均已被完全废弃。最新架构请参考项目根目录的 `ARCHITECTURE.md`。
 > **文档版本**：v2.0  
 > 本文档定义从 Demo 原型到生产级系统的升级路径。  
 > 核心原则：**所有 Protocol 接口保持不变**，只替换 `infrastructure/` 层的内部实现，`services/` 和 `delivery/` 层代码不需要修改。

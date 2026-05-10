@@ -88,7 +88,7 @@ class PipelineService:
         6. 获取已摘要未向量化文章
         7. 分块：按 Markdown 章节切分为父子 chunks
         8. 生成子 chunk Embedding
-        9. 子 chunk 向量写入 Qdrant + 父 chunk 写入 PostgreSQL
+        9. 子 chunk 向量 + 父 chunk 写入 PostgreSQL
         10. 标记为已向量化
 
         每步独立 try/except，失败记日志但不终止后续步骤。
@@ -197,7 +197,7 @@ class PipelineService:
         return result
 
     def _embed_with_chunks(self, articles: list, result: dict) -> int:
-        """分块 → Embedding → 写入 Qdrant + PostgreSQL。
+        """分块 → Embedding → 写入 PostgreSQL。
 
         Args:
             articles: 待向量化的文章列表。
@@ -219,7 +219,7 @@ class PipelineService:
         child_texts = [c.content for c in all_children]
         embeddings = self.embedding_client.embed(child_texts)
 
-        # 3. 子 chunk 向量写入 Qdrant
+        # 3. 子 chunk 向量写入 PostgreSQL/pgvector
         embedded_count = self.vector_store.add_chunks(all_children, embeddings)
 
         # 4. 父 chunk 写入 PostgreSQL

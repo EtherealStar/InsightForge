@@ -8,7 +8,7 @@ from models.search import SearchResult, ChunkSearchResult
 
 @runtime_checkable
 class ArticleStoreProtocol(Protocol):
-    """文章元数据存储（SQLite / PostgreSQL）"""
+    """文章元数据存储（PostgreSQL）"""
 
     def save_articles(self, articles: list[Article]) -> int: ...
 
@@ -98,7 +98,7 @@ class ArticleStoreProtocol(Protocol):
 
 @runtime_checkable
 class VectorStoreProtocol(Protocol):
-    """向量存储（Qdrant）— chunk 级别存储与检索"""
+    """向量存储（pgvector）— chunk 级别存储与检索"""
 
     def add_chunks(
         self, chunks: list[Chunk], embeddings: list[list[float]]
