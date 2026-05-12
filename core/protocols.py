@@ -1,7 +1,8 @@
 """接口契约：Demo 和 Full 都实现这些 Protocol"""
-from typing import Protocol, Iterator, runtime_checkable
+from typing import Any, Protocol, Iterator, runtime_checkable
 
 from models.article import Article
+from models.agent_session import AgentSession, ResearchTodo, SessionStatus
 from models.chunk import Chunk, ParentChunk
 from models.search import SearchResult, ChunkSearchResult
 
@@ -176,3 +177,51 @@ class RerankClientProtocol(Protocol):
             按 relevance_score 降序排列。
         """
         ...
+
+
+@runtime_checkable
+class AgentSessionStoreProtocol(Protocol):
+    """Agent 会话存储（PostgreSQL + Redis 缓存）。"""
+
+    def create_session(
+        self,
+        topic: str,
+        plan: dict[str, Any] | str | None,
+        todos: list[ResearchTodo],
+        messages: list[dict[str, Any]] | None = None,
+    ) -> AgentSession: ...
+
+    def get_session(self, session_id: str) -> AgentSession | None: ...
+
+    def save_plan(
+        self,
+        session_id: str,
+        plan: dict[str, Any] | str,
+        todos: list[ResearchTodo],
+    ) -> AgentSession: ...
+
+    def update_status(
+        self,
+        session_id: str,
+        status: SessionStatus,
+        error: str | None = None,
+    ) -> AgentSession: ...
+
+    def append_event(self, session_id: str, event: dict[str, Any]) -> None: ...
+
+    def update_todos(
+        self,
+        session_id: str,
+        todos: list[ResearchTodo],
+    ) -> AgentSession: ...
+
+    def complete_session(
+        self,
+        session_id: str,
+        final_answer: str,
+        report_filename: str | None,
+    ) -> AgentSession: ...
+
+    def fail_session(self, session_id: str, error: str) -> AgentSession: ...
+
+    def flush_session(self, session_id: str) -> None: ...

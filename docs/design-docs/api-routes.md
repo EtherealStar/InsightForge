@@ -49,6 +49,10 @@
 | 方法 | 路径 | 功能 |
 |---|---|---|
 | POST | `/api/research/stream` | SSE 流式深度研究 |
+| POST | `/api/research/sessions/plan` | 生成 Plan Execute 研究计划，返回 session_id、plan、todos |
+| PUT | `/api/research/sessions/{session_id}/plan` | 保存用户审阅/编辑后的 plan 和 todo list |
+| POST | `/api/research/sessions/{session_id}/execute/stream` | 按确认后的 plan/todos SSE 流式执行研究 |
+| GET | `/api/research/sessions/{session_id}` | 获取 Plan Execute 会话详情 |
 | GET | `/api/research` | 研究报告列表 |
 | GET | `/api/research/{filename}` | 单份研究报告内容 |
 | DELETE | `/api/research/{filename}` | 删除研究报告 |

@@ -18,6 +18,7 @@ from typing import Any, Callable
 from core.config import AppConfig
 from core.factory import (
     create_article_store,
+    create_agent_session_store,
     create_vector_store,
     create_llm_client,
     create_embedding_client,
@@ -61,6 +62,7 @@ class ConfigManager:
 
         # 缓存的组件实例
         self._article_store: Any = None
+        self._agent_session_store: Any = None
         self._vector_store: Any = None
         self._llm_client: Any = None
         self._embedding_client: Any = None
@@ -83,6 +85,7 @@ class ConfigManager:
         """（在锁外调用时需自行加锁）重建全部组件。"""
         with self._component_lock:
             self._article_store = create_article_store(self._config)
+            self._agent_session_store = create_agent_session_store(self._config)
             self._vector_store = create_vector_store(self._config)
             try:
                 self._llm_client = create_llm_client(self._config)
@@ -146,7 +149,7 @@ class ConfigManager:
             "openai_api_key", "google_api_key", "anthropic_api_key",
         }
         embed_fields = {"embedding_api_key", "embedding_base_url", "embedding_model"}
-        store_fields = {"pg_dsn"}
+        store_fields = {"pg_dsn", "celery_broker_url"}
         vector_fields = {"pg_dsn", "embedding_vector_size"}
 
         changed_keys = set(changes.keys())
@@ -155,7 +158,9 @@ class ConfigManager:
         with self._component_lock:
             if changed_keys & store_fields:
                 self._article_store = create_article_store(self._config)
+                self._agent_session_store = create_agent_session_store(self._config)
                 rebuilt.append("article_store")
+                rebuilt.append("agent_session_store")
 
             if changed_keys & vector_fields:
                 self._vector_store = create_vector_store(self._config)
@@ -229,6 +234,11 @@ class ConfigManager:
     def article_store(self):
         """返回缓存的 ArticleStore 单例。"""
         return self._article_store
+
+    @property
+    def agent_session_store(self):
+        """返回缓存的 AgentSessionStore 单例。"""
+        return self._agent_session_store
 
     @property
     def vector_store(self):

@@ -24,6 +24,8 @@ stored → pending_summary → summarized → embedded
 Article (1) ──→ (N) ParentChunk (父分块, PostgreSQL)
 Article (1) ──→ (N) Chunk (子分块, PostgreSQL/pgvector)
 Chunk (N)   ──→ (1) ParentChunk (通过 parent_chunk_id)
+
+AgentSession (1) ──→ (1) Plan Execute 深度研究会话
 ```
 
 外键约束已配置 `ON DELETE CASCADE`：删除文章时自动级联删除关联的父子 chunks。
@@ -55,5 +57,44 @@ Chunk (N)   ──→ (1) ParentChunk (通过 parent_chunk_id)
          ├── 子 chunks (≤512 tok) ──→ Embedding ──→ PostgreSQL child_chunks
          │                                          embedding + parent_chunk_id
          └── 父 chunks (~1024 tok) ──→ PostgreSQL (parent_chunks)
-                                       含 search_vector (jieba tsvector)
+                                      含 search_vector (jieba tsvector)
 ```
+
+---
+
+## AgentSession Plan Execute 会话
+
+`agent_sessions` 保存 Plan Execute 深度研究的完整会话状态：用户主题、AI 生成的 PLAN、用户确认后的 todo list、执行事件、最终报告正文和报告文件名。
+
+### 状态流转
+
+```
+planned → approved → running → completed
+                     └──────→ failed
+planned ────────────→ cancelled
+```
+
+- `planned`：AI 已生成研究计划，等待用户审阅或编辑 todo
+- `approved`：用户已确认计划和 todo，准备执行
+- `running`：ReAct Agent 正在按确认后的计划执行
+- `completed`：执行完成，`final_answer` 有最终报告正文，`report_filename` 指向 `output/research` 中的 Markdown 文件
+- `failed`：执行失败，`error` 记录失败原因
+- `cancelled`：用户取消执行
+
+### 缓存与持久化
+
+- 执行期 Redis 缓存键为 `logos:agent_session:{session_id}`，保存完整会话 JSON。
+- 计划生成、用户保存计划、状态切换会立即 upsert PostgreSQL。
+- 执行中 `events` 和 `todos` 优先更新 Redis；Redis 不可用时直接写 PostgreSQL。
+- `completed/failed/cancelled` 终态会将 Redis 中的完整会话 flush 到 PostgreSQL。
+
+### JSONB 字段语义
+
+- `messages`：OpenAI message 格式数组，用于审计计划生成上下文。
+- `plan`：结构化研究计划；如果模型返回非 JSON，则保存为 `{"raw": "..."}`。
+- `todos`：用户最终确认的执行列表，元素包含 `id/title/status`。
+- `events`：`AgentEvent.to_dict()` 序列化结果，包含 `thought/action_start/action_result/todo_update/answer/error` 等事件。
+
+### 报告兼容关系
+
+最终报告继续由 `DeepResearchService` 写入 `output/research/research_*.md`，以兼容现有报告列表、查看、导出、删除和 Webhook 推送接口。`agent_sessions.report_filename` 只保存文件名，`final_answer` 保存报告正文副本，便于会话详情直接展示。

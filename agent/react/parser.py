@@ -158,23 +158,29 @@ class StreamingReActParser:
         self._buffer = ""
         self._answer_started = False
         self._answer_offset = 0
+        self._processed_pos = 0
+        self._current_step_type: StepType | None = None
+        self._pending_action_tool: str | None = None
 
     def reset(self):
         """重置解析器状态。"""
         self._buffer = ""
         self._answer_started = False
         self._answer_offset = 0
+        self._processed_pos = 0
+        self._current_step_type = None
+        self._pending_action_tool = None
 
     def feed(self, token: str) -> list[ReActStep]:
         """输入一个 token，返回可安全即时输出的步骤。
 
-        当前只即时返回 Answer 增量；Thought/Action 需要完整上下文，
-        在 flush() 中一次性返回，避免半截 JSON 触发工具调用。
+        对已完成的单行 Thought / Action Input 可即时返回步骤；
+        Answer 会按增量返回，flush() 仍会产出完整结构化步骤。
         """
         self._buffer += token
         answer_match = ReActParser._ANSWER_RE.search(self._buffer)
         if not answer_match:
-            return []
+            return self._parse_completed_lines()
 
         answer_start = answer_match.start(1)
         if not self._answer_started:
@@ -194,4 +200,40 @@ class StreamingReActParser:
         """处理完整 LLM 输出并返回结构化步骤。"""
         steps = ReActParser().parse(self._buffer)
         self.reset()
+        return steps
+
+    def _parse_completed_lines(self) -> list[ReActStep]:
+        steps: list[ReActStep] = []
+        while True:
+            newline_index = self._buffer.find("\n", self._processed_pos)
+            if newline_index == -1:
+                break
+
+            line = self._buffer[self._processed_pos:newline_index].strip()
+            self._processed_pos = newline_index + 1
+            if not line:
+                continue
+
+            if line.startswith("Thought:"):
+                content = line[len("Thought:"):].strip()
+                if content:
+                    self._current_step_type = "thought"
+                    steps.append(ReActStep(
+                        step_type="thought",
+                        content=content,
+                    ))
+            elif line.startswith("Action Input:") and self._pending_action_tool:
+                raw_input = line[len("Action Input:"):].strip()
+                self._current_step_type = "action"
+                steps.append(ReActStep(
+                    step_type="action",
+                    content=f"调用 {self._pending_action_tool}",
+                    tool_name=self._pending_action_tool,
+                    tool_input=ReActParser._parse_json_input(raw_input),
+                ))
+                self._pending_action_tool = None
+            elif line.startswith("Action:"):
+                self._pending_action_tool = line[len("Action:"):].strip()
+                self._current_step_type = "action"
+
         return steps

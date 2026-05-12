@@ -4,6 +4,7 @@ import json
 import os
 import structlog
 import zipfile
+from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -16,6 +17,11 @@ _RESEARCH_DIR = os.path.join("output", "research")
 
 class ResearchRequest(BaseModel):
     topic: str
+
+
+class ResearchPlanUpdateRequest(BaseModel):
+    plan: Any
+    todos: list[dict]
 
 
 class BatchFilenamesRequest(BaseModel):
@@ -90,6 +96,139 @@ def research_stream(req: ResearchRequest):
     except Exception as e:
         logger.error(f"深度研究初始化失败: {e}")
         raise HTTPException(status_code=500, detail=f"深度研究失败: {e}")
+
+
+def _get_plan_execute_runner():
+    from core.config_manager import get_config_manager
+    from agent.react.plan_execute_runner import PlanExecuteRunner
+    from agent.tools.registry import get_tool_registry
+    from services.deep_research_service import DeepResearchService
+
+    mgr = get_config_manager()
+    if not mgr.llm_client:
+        raise HTTPException(
+            status_code=503, detail="LLM 客户端未配置，无法执行深度研究"
+        )
+    return PlanExecuteRunner(
+        llm_client=mgr.llm_client,
+        tool_registry=get_tool_registry(),
+        session_store=mgr.agent_session_store,
+        report_service=DeepResearchService(output_dir=_RESEARCH_DIR),
+        max_steps=15,
+    )
+
+
+def _get_session_store():
+    from core.config_manager import get_config_manager
+
+    return get_config_manager().agent_session_store
+
+
+@router.post("/sessions/plan")
+def create_research_plan(req: ResearchRequest):
+    """生成 Plan Execute 研究计划，等待用户审阅。"""
+    try:
+        runner = _get_plan_execute_runner()
+        session = runner.generate_plan(req.topic)
+        return {
+            "session_id": session.id,
+            "topic": session.topic,
+            "plan": session.plan,
+            "todos": [todo.to_dict() for todo in session.todos],
+            "status": session.status.value,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("research.plan_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"生成研究计划失败: {e}")
+
+
+@router.put("/sessions/{session_id}/plan")
+def update_research_plan(session_id: str, req: ResearchPlanUpdateRequest):
+    """保存用户审阅后的 plan 和 todo list。"""
+    try:
+        from models.agent_session import ResearchTodo
+
+        todos = [
+            ResearchTodo.from_dict(todo)
+            for todo in req.todos
+            if isinstance(todo, dict)
+        ]
+        session = _get_session_store().save_plan(session_id, req.plan, todos)
+        return session.to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception(
+            "research.plan_update_failed",
+            session_id=session_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"保存研究计划失败: {e}")
+
+
+@router.post("/sessions/{session_id}/execute/stream")
+def execute_research_session(session_id: str):
+    """按已确认计划流式执行深度研究。"""
+    try:
+        runner = _get_plan_execute_runner()
+        session = _get_session_store().get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="研究会话不存在")
+
+        def event_generator():
+            try:
+                for event in runner.execute(session):
+                    event_data = json.dumps(
+                        event.to_dict(), ensure_ascii=False
+                    )
+                    yield f"data: {event_data}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                logger.exception(
+                    "research.execute_failed",
+                    session_id=session_id,
+                    error=str(e),
+                )
+                error_event = json.dumps(
+                    {
+                        "event_type": "error",
+                        "content": str(e),
+                        "run_id": session_id,
+                    },
+                    ensure_ascii=False,
+                )
+                yield f"data: {error_event}\n\n"
+                yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "research.execute_init_failed",
+            session_id=session_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"执行研究失败: {e}")
+
+
+@router.get("/sessions/{session_id}")
+def get_research_session(session_id: str):
+    """获取 Plan Execute 研究会话详情。"""
+    session = _get_session_store().get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="研究会话不存在")
+    return session.to_dict()
 
 
 @router.get("")

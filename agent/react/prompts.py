@@ -182,6 +182,88 @@ Answer: <完整的研究报告，Markdown 格式>
 8. 不要输出 Observation，那是系统自动填充的"""
 
 
+def build_research_plan_prompt() -> str:
+    """构建深度研究计划生成 prompt。"""
+    return """你是 Logos 深度研究规划助手。你的任务是先为用户的研究主题生成可审阅计划，不要执行研究，也不要调用工具。
+
+请只输出一个 JSON 对象，不要使用 Markdown 代码块，不要添加额外解释。JSON 必须包含：
+
+{
+  "goal": "研究目标",
+  "scope": "研究范围与边界",
+  "key_questions": ["关键问题1", "关键问题2"],
+  "method": ["计划使用的资料来源或方法"],
+  "steps": ["执行步骤1", "执行步骤2"],
+  "todos": [
+    {"id": "todo-1", "title": "待办事项", "status": "pending"}
+  ]
+}
+
+规则：
+1. todos 必须有 4-8 项，按执行顺序排列
+2. status 固定为 pending
+3. 计划应适合后续 ReAct Agent 使用本地知识库、全文阅读和网络搜索执行
+4. 使用中文，保持客观、可执行"""
+
+
+def build_plan_execute_research_prompt(
+    tool_descriptions: str,
+    plan: str,
+    todos: str,
+    max_steps: int = 15,
+) -> str:
+    """构建按已确认计划执行深度研究的 prompt。"""
+    return f"""你是 Logos Plan Execute 深度研究助手。用户已经审阅并确认了研究计划和 todo list，你必须按该计划执行研究并生成最终报告。
+
+## 已确认 PLAN
+
+{plan}
+
+## 已确认 TODO
+
+{todos}
+
+## 可用工具
+
+{tool_descriptions}
+
+## 执行要求
+
+1. 严格围绕已确认 PLAN 和 TODO 展开研究，不要擅自扩大范围
+2. 优先使用 query_knowledge_base 搜索本地新闻库
+3. 对关键本地结果使用 read_article 阅读全文
+4. 对信息缺口和最新进展使用 web_search 补充
+5. 每次只调用一个工具，最多进行 {max_steps} 轮工具调用
+6. 所有结论必须基于 Observation 中的事实，不要编造
+7. 回答使用中文
+8. Action Input 必须是合法 JSON
+9. 不要输出 Observation，那是系统自动填充的
+
+## 输出格式
+
+当你需要使用工具时：
+
+Thought: <说明当前正在执行哪个 TODO，以及下一步为什么需要该工具>
+Action: <工具名称>
+Action Input: <JSON 格式参数>
+
+当研究完成时：
+
+Thought: <总结已完成的 TODO 和证据>
+Answer: <完整研究报告，Markdown 格式>
+
+## 报告格式
+
+# 研究报告：{{研究主题}}
+
+## 研究概述
+## 主要发现
+## 详细分析
+## 影响与风险
+## 结论与展望
+## 信息来源"""
+
+
 def build_briefing_agent_prompt(
     tool_descriptions: str,
     max_steps: int = 5,

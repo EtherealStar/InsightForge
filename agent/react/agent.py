@@ -34,6 +34,7 @@ EventType = Literal[
     "action_result",
     "answer_delta",
     "answer",
+    "todo_update",
     "error",
     # Legacy event names accepted for compatibility with stored events/tests.
     "action",

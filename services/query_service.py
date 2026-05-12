@@ -37,7 +37,7 @@ class QueryService:
 
     def answer_agent(self, question: str, run_id: str | None = None):
         """ReAct Agent 非流式问答。"""
-        agent = self._build_agent(run_id=run_id)
+        agent = self._build_agent(run_id=run_id) if run_id else self._build_agent()
         return agent.run(question)
 
     def answer_agent_stream(
@@ -54,5 +54,5 @@ class QueryService:
         Yields:
             AgentEvent: 推理/行动/观察/回答事件。
         """
-        agent = self._build_agent(run_id=run_id)
+        agent = self._build_agent(run_id=run_id) if run_id else self._build_agent()
         yield from agent.run_stream(question)

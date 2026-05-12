@@ -448,6 +448,8 @@ class NewsMarkdownConverter:
         for i in range(len(parts)):
             if i % 2 == 0:  # 非代码块部分
                 parts[i] = re.sub(r'(?m)^#{1,6}\s+.*$', r'\n\n\g<0>\n\n', parts[i])
+            else:
+                parts[i] = f"\n\n{parts[i].strip()}\n\n"
         text = "".join(parts)
 
         # 将 3 个及以上连续空行缩减为 2 个

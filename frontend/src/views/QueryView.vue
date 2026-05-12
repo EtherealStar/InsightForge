@@ -93,6 +93,27 @@
           </div>
         </div>
 
+        <div v-if="pendingPlan" class="plan-review">
+          <div class="plan-review-header">
+            <div>
+              <h3>研究计划审阅</h3>
+              <p>{{ pendingPlan.topic }}</p>
+            </div>
+            <button class="btn btn-primary" @click="confirmAndExecutePlan" :disabled="streaming">
+              {{ streaming ? '执行中...' : '确认并执行' }}
+            </button>
+          </div>
+          <textarea v-model="planEditingText" class="input plan-editor" :disabled="streaming"></textarea>
+          <div class="todo-editor">
+            <div v-for="(todo, idx) in editableTodos" :key="todo.id || idx" class="todo-row">
+              <span class="todo-status" :class="todo.status">{{ todoStatusLabel(todo.status) }}</span>
+              <input v-model="todo.title" class="input" :disabled="streaming" />
+              <button class="btn btn-sm" @click="removeTodo(idx)" :disabled="streaming || editableTodos.length <= 1">删除</button>
+            </div>
+            <button class="btn btn-sm" @click="addTodo" :disabled="streaming">添加 Todo</button>
+          </div>
+        </div>
+
         <!-- 流式加载中 -->
         <div v-if="streaming" class="chat-message assistant">
           <div class="message-avatar">🧠</div>
@@ -154,6 +175,9 @@ const showReports = ref(false)
 const reports = ref([])
 const selectedReports = ref([])
 const viewingReport = ref(null)
+const pendingPlan = ref(null)
+const planEditingText = ref('')
+const editableTodos = ref([])
 
 const DEEP_RESEARCH_KEYWORDS = ['深度研究', '深入分析', '深度分析', '写报告', '写一份报告', '详细调查', '研究报告', '深入研究', '全面分析', '深入调查']
 
@@ -205,6 +229,44 @@ function isToolEvent(type) {
   return type === 'action' || type === 'action_start'
 }
 
+function todoStatusLabel(status) {
+  return {
+    pending: '待执行',
+    in_progress: '执行中',
+    completed: '完成',
+  }[status] || status || '待执行'
+}
+
+function formatPlan(plan) {
+  if (!plan) return ''
+  if (typeof plan === 'string') return plan
+  try { return JSON.stringify(plan, null, 2) } catch { return String(plan) }
+}
+
+function parsePlanText(text) {
+  try { return JSON.parse(text) } catch { return { raw: text } }
+}
+
+function normalizeTodos(todos) {
+  return (todos || []).map((todo, idx) => ({
+    id: todo.id || `todo-${idx + 1}`,
+    title: todo.title || '',
+    status: todo.status || 'pending',
+  }))
+}
+
+function addTodo() {
+  editableTodos.value.push({
+    id: `todo-${Date.now()}`,
+    title: '',
+    status: 'pending',
+  })
+}
+
+function removeTodo(index) {
+  editableTodos.value.splice(index, 1)
+}
+
 function formatToolInput(inp) {
   if (!inp) return ''
   try { return Object.entries(inp).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ') } catch { return String(inp) }
@@ -232,9 +294,21 @@ async function askQuestion(question) {
   const useDeepResearch = DEEP_RESEARCH_KEYWORDS.some(k => q.includes(k))
 
   try {
-    const response = useDeepResearch
-      ? await researchApi.startStream(q)
-      : await queryApi.askStream(q)
+    if (useDeepResearch) {
+      const res = await researchApi.createPlan(q)
+      pendingPlan.value = res.data
+      planEditingText.value = formatPlan(res.data.plan)
+      editableTodos.value = normalizeTodos(res.data.todos)
+      messages.value.push({
+        role: 'assistant',
+        content: '已生成研究计划，请审阅并调整 todo list 后确认执行。',
+        reasoning: null,
+        reasoningOpen: false,
+      })
+      return
+    }
+
+    const response = await queryApi.askStream(q)
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -279,13 +353,96 @@ async function askQuestion(question) {
       reasoningOpen: false,
     })
 
-    // 深度研究完成后刷新报告列表
-    if (useDeepResearch) fetchReports()
   } catch (e) {
     messages.value.push({
       role: 'assistant',
       content: `❌ 请求失败: ${e.message}\n\n请检查后端服务是否正常运行。`,
       reasoning: null, reasoningOpen: false,
+    })
+  } finally {
+    streaming.value = false
+    streamAnswer.value = ''
+    streamRawOutput.value = ''
+    streamReasoning.value = []
+    scrollToBottom()
+  }
+}
+
+async function confirmAndExecutePlan() {
+  if (!pendingPlan.value || streaming.value) return
+
+  const sessionId = pendingPlan.value.session_id
+  const plan = parsePlanText(planEditingText.value)
+  const todos = editableTodos.value
+    .filter(todo => todo.title?.trim())
+    .map((todo, idx) => ({
+      id: todo.id || `todo-${idx + 1}`,
+      title: todo.title.trim(),
+      status: todo.status || 'pending',
+    }))
+
+  streaming.value = true
+  streamAnswer.value = ''
+  streamRawOutput.value = ''
+  streamReasoning.value = []
+  const reasoning = []
+
+  try {
+    await researchApi.updatePlan(sessionId, { plan, todos })
+    editableTodos.value = todos
+    const response = await researchApi.executeStream(sessionId)
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6)
+          if (data === '[DONE]') break
+          try {
+            const event = JSON.parse(data)
+            if (event.event_type === 'llm_delta') {
+              streamRawOutput.value += event.content || ''
+            } else if (event.event_type === 'answer_delta') {
+              streamAnswer.value += event.content || ''
+            } else if (event.event_type === 'answer') {
+              streamAnswer.value = event.content
+              streamRawOutput.value = ''
+            } else if (event.event_type === 'todo_update') {
+              editableTodos.value = normalizeTodos(event.metadata?.todos || editableTodos.value)
+            } else if (event.event_type === 'error') {
+              streamAnswer.value += '\n\n❌ ' + event.content
+            } else {
+              reasoning.push(event)
+              streamReasoning.value = [...reasoning]
+            }
+            scrollToBottom()
+          } catch { /* ignore */ }
+        }
+      }
+    }
+
+    messages.value.push({
+      role: 'assistant',
+      content: streamAnswer.value,
+      reasoning: reasoning.length > 0 ? [...reasoning] : null,
+      reasoningOpen: false,
+    })
+    pendingPlan.value = null
+    fetchReports()
+  } catch (e) {
+    messages.value.push({
+      role: 'assistant',
+      content: `❌ 研究执行失败: ${e.message}`,
+      reasoning: null,
+      reasoningOpen: false,
     })
   } finally {
     streaming.value = false
@@ -438,6 +595,56 @@ onMounted(fetchReports)
   background: var(--accent-glow);
   border-color: rgba(245, 158, 11, 0.2);
 }
+
+.plan-review {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+.plan-review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-md);
+}
+.plan-review-header h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+.plan-review-header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+.plan-editor {
+  min-height: 220px;
+  resize: vertical;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.todo-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.todo-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.todo-status {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.todo-status.in_progress { color: #f59e0b; }
+.todo-status.completed { color: #10b981; }
 
 /* 推理过程 */
 .reasoning-block {

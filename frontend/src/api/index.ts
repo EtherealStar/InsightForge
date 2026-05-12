@@ -85,6 +85,16 @@ export const queryApi = {
 
 // ========== 深度研究 ==========
 export const researchApi = {
+  createPlan: (topic: string) => api.post('/research/sessions/plan', { topic }),
+  updatePlan: (sessionId: string, data: any) => api.put(`/research/sessions/${sessionId}/plan`, data),
+  getSession: (sessionId: string) => api.get(`/research/sessions/${sessionId}`),
+  executeStream: (sessionId: string) => {
+    return fetch(`/api/research/sessions/${sessionId}/execute/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+  },
   startStream: (topic: string) => {
     // SSE 流式深度研究
     return fetch('/api/research/stream', {
