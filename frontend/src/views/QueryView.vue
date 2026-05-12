@@ -45,8 +45,32 @@
     </div>
 
     <!-- 对话区域 -->
-    <div v-else class="chat-container card">
-      <div class="chat-messages" ref="messagesRef">
+    <div v-else class="chat-shell card">
+      <aside class="session-sidebar">
+        <button class="btn btn-primary new-chat-btn" @click="newConversation" :disabled="streaming">
+          新对话
+        </button>
+        <div class="session-title">最近会话</div>
+        <div v-if="sessionsLoading" class="session-empty">加载中...</div>
+        <div v-else-if="!sessions.length" class="session-empty">暂无普通问答会话</div>
+        <template v-else>
+          <button
+            v-for="session in sessions"
+            :key="session.session_id"
+            class="session-item"
+            :class="{ active: currentSessionId === session.session_id }"
+            @click="openSession(session.session_id)"
+            :disabled="streaming"
+          >
+            <span class="session-topic">{{ session.topic || '未命名会话' }}</span>
+            <span class="session-preview">{{ session.last_message_preview || '暂无消息' }}</span>
+            <span class="session-meta">{{ formatTime(session.updated_at) }} · {{ session.message_count || 0 }} 条</span>
+          </button>
+        </template>
+      </aside>
+
+      <div class="chat-container">
+        <div class="chat-messages" ref="messagesRef">
         <div v-if="!messages.length" class="chat-welcome">
           <div class="welcome-icon"></div>
           <h2>你好，我是 Logos 智能助手</h2>
@@ -144,16 +168,17 @@
             <span v-if="!streamAnswer" class="typing-cursor">▊</span>
           </div>
         </div>
-      </div>
+        </div>
 
-      <!-- 输入区 -->
-      <div class="chat-input-area">
-        <input v-model="input" class="input chat-input"
-          :placeholder="inputPlaceholder"
-          @keyup.enter="askQuestion(input)" :disabled="streaming" />
-        <button class="btn btn-primary" @click="askQuestion(input)" :disabled="!input.trim() || streaming">
-          {{ streaming ? (isDeepResearch ? '研究中...' : '推理中...') : '发送' }}
-        </button>
+        <!-- 输入区 -->
+        <div class="chat-input-area">
+          <input v-model="input" class="input chat-input"
+            :placeholder="inputPlaceholder"
+            @keyup.enter="askQuestion(input)" :disabled="streaming" />
+          <button class="btn btn-primary" @click="askQuestion(input)" :disabled="!input.trim() || streaming">
+            {{ streaming ? (isDeepResearch ? '研究中...' : '推理中...') : '发送' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -178,6 +203,9 @@ const viewingReport = ref(null)
 const pendingPlan = ref(null)
 const planEditingText = ref('')
 const editableTodos = ref([])
+const sessions = ref([])
+const sessionsLoading = ref(false)
+const currentSessionId = ref(null)
 
 const DEEP_RESEARCH_KEYWORDS = ['深度研究', '深入分析', '深度分析', '写报告', '写一份报告', '详细调查', '研究报告', '深入研究', '全面分析', '深入调查']
 
@@ -276,6 +304,59 @@ function scrollToBottom() {
   nextTick(() => { if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight })
 }
 
+function formatTime(value) {
+  if (!value) return '未知时间'
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return '未知时间'
+  }
+}
+
+function normalizeSessionMessages(items) {
+  return (items || [])
+    .filter(item => item?.role === 'user' || item?.role === 'assistant')
+    .map(item => ({
+      role: item.role,
+      content: item.content || '',
+      reasoning: null,
+      reasoningOpen: false,
+    }))
+}
+
+async function fetchSessions() {
+  sessionsLoading.value = true
+  try {
+    const res = await queryApi.listSessions({ limit: 30, offset: 0 })
+    sessions.value = res.data.items || []
+  } catch {
+    sessions.value = []
+  } finally {
+    sessionsLoading.value = false
+  }
+}
+
+function newConversation() {
+  currentSessionId.value = null
+  messages.value = []
+  pendingPlan.value = null
+  planEditingText.value = ''
+  editableTodos.value = []
+  input.value = ''
+  scrollToBottom()
+}
+
+async function openSession(sessionId) {
+  if (!sessionId || streaming.value) return
+  try {
+    const res = await queryApi.getSession(sessionId)
+    currentSessionId.value = res.data.session_id || res.data.id
+    messages.value = normalizeSessionMessages(res.data.messages)
+    pendingPlan.value = null
+    scrollToBottom()
+  } catch { /* silent */ }
+}
+
 async function askQuestion(question) {
   if (!question?.trim()) return
   const q = question.trim()
@@ -308,7 +389,7 @@ async function askQuestion(question) {
       return
     }
 
-    const response = await queryApi.askStream(q)
+    const response = await queryApi.askStream(q, 10, currentSessionId.value)
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -327,6 +408,9 @@ async function askQuestion(question) {
           if (data === '[DONE]') break
           try {
             const event = JSON.parse(data)
+            if (!currentSessionId.value && event.run_id) {
+              currentSessionId.value = event.run_id
+            }
             if (event.event_type === 'llm_delta') {
               streamRawOutput.value += event.content || ''
             } else if (event.event_type === 'answer_delta') {
@@ -352,6 +436,7 @@ async function askQuestion(question) {
       reasoning: reasoning.length > 0 ? [...reasoning] : null,
       reasoningOpen: false,
     })
+    fetchSessions()
 
   } catch (e) {
     messages.value.push({
@@ -485,7 +570,10 @@ async function pushReport(filename) {
   }
 }
 
-onMounted(fetchReports)
+onMounted(() => {
+  fetchReports()
+  fetchSessions()
+})
 </script>
 
 <style scoped>
@@ -499,13 +587,84 @@ onMounted(fetchReports)
   gap: var(--space-sm);
 }
 
-.chat-container {
+.chat-shell {
   display: flex;
-  flex-direction: column;
   height: calc(100vh - 180px);
   min-height: 500px;
   padding: 0;
   overflow: hidden;
+}
+
+.session-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  padding: var(--space-md);
+  overflow-y: auto;
+}
+.new-chat-btn {
+  width: 100%;
+  margin-bottom: var(--space-md);
+}
+.session-title {
+  margin-bottom: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.session-empty {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  padding: var(--space-md) 0;
+}
+.session-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-sm);
+  margin-bottom: var(--space-xs);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.session-item:hover {
+  background: var(--bg-card);
+}
+.session-item.active {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: var(--accent-glow);
+}
+.session-topic {
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-preview {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-meta {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.chat-container {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
 }
 
 .chat-messages {
@@ -759,4 +918,21 @@ onMounted(fetchReports)
 .report-detail .markdown-body { padding: var(--space-lg); }
 
 .empty-state { text-align: center; padding: var(--space-xl); color: var(--text-muted); }
+
+@media (max-width: 900px) {
+  .chat-shell {
+    flex-direction: column;
+    height: auto;
+    min-height: calc(100vh - 180px);
+  }
+  .session-sidebar {
+    width: auto;
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .chat-container {
+    min-height: 520px;
+  }
+}
 </style>

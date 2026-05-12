@@ -30,6 +30,12 @@ const routes = [
     meta: { title: '智能助手', icon: '' },
   },
   {
+    path: '/memory',
+    name: 'Memory',
+    component: () => import('../views/MemoryView.vue'),
+    meta: { title: '记忆管理', icon: '' },
+  },
+  {
     path: '/webhook',
     name: 'Webhook',
     component: () => import('../views/WebhookView.vue'),

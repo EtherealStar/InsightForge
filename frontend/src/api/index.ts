@@ -72,15 +72,30 @@ export const webhookApi = {
 
 // ========== AI 问答 (ReAct Agent) ==========
 export const queryApi = {
-  ask: (question: string, topK: number = 10) => api.post('/query', { question, top_k: topK }),
-  askStream: (question: string, topK: number = 10) => {
+  ask: (question: string, topK: number = 10, sessionId?: string | null) => (
+    api.post('/query', { question, top_k: topK, session_id: sessionId || undefined })
+  ),
+  askStream: (question: string, topK: number = 10, sessionId?: string | null) => {
     // SSE 流式请求 — ReAct Agent 模式
     return fetch('/api/query/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, top_k: topK }),
+      body: JSON.stringify({ question, top_k: topK, session_id: sessionId || undefined }),
     })
   },
+  listSessions: (params?: any) => api.get('/query/sessions', { params }),
+  getSession: (sessionId: string) => api.get(`/query/sessions/${sessionId}`),
+}
+
+// ========== 记忆管理 ==========
+export const memoryApi = {
+  listCore: (kind?: string) => api.get('/memory/core', { params: kind ? { kind } : undefined }),
+  createCore: (data: any) => api.post('/memory/core', data),
+  listPersistent: (params?: any) => api.get('/memory/persistent', { params }),
+  createPersistent: (data: any) => api.post('/memory/persistent', data),
+  updatePersistentStatus: (id: string, status: string) => api.put(`/memory/persistent/${id}/status`, { status }),
+  deletePersistent: (id: string) => api.delete(`/memory/persistent/${id}`),
+  getIndex: () => api.get('/memory/index'),
 }
 
 // ========== 深度研究 ==========

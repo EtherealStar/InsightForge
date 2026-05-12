@@ -2,7 +2,7 @@
 import json
 import uuid
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -33,6 +33,56 @@ def _get_query_service():
             mgr.llm_client,
         ),
     )
+
+
+def _get_session_store():
+    from core.config_manager import get_config_manager
+
+    return get_config_manager().agent_session_store
+
+
+def _session_preview(session) -> str:
+    for message in reversed(session.messages or []):
+        content = str(message.get("content") or "").strip()
+        if content:
+            return content[:160]
+    return ""
+
+
+def _session_summary(session) -> dict:
+    return {
+        "session_id": session.id,
+        "id": session.id,
+        "topic": session.topic,
+        "status": session.status.value,
+        "session_type": session.session_type,
+        "message_count": len(session.messages or []),
+        "last_message_preview": _session_preview(session),
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+    }
+
+
+@router.get("/sessions")
+def list_query_sessions(
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    store = _get_session_store()
+    sessions = store.list_sessions(
+        session_type="general_query",
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": [_session_summary(session) for session in sessions]}
+
+
+@router.get("/sessions/{session_id}")
+def get_query_session(session_id: str):
+    session = _get_session_store().get_session(session_id)
+    if not session or session.session_type != "general_query":
+        raise HTTPException(status_code=404, detail="普通问答会话不存在")
+    return session.to_dict()
 
 
 @router.post("")

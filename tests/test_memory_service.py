@@ -27,7 +27,35 @@ class FakeMemoryStore:
         return [SimpleNamespace(line="- [feedback-concise] - 回复保持简洁")]
 
     def list_persistent_memories(self, status=None, memory_type=None):
-        return [item for item in self.memories if status is None or item.status == status]
+        return [
+            item
+            for item in self.memories
+            if (status is None or item.status == status)
+            and (memory_type is None or item.memory_type == memory_type)
+        ]
+
+    def create_persistent_memory(
+        self,
+        memory_type,
+        title,
+        summary,
+        content,
+        source_session_id=None,
+        confidence=None,
+        status=MemoryStatus.PENDING,
+    ):
+        item = PersistentMemory(
+            id=f"m{len(self.memories) + 1}",
+            memory_type=memory_type,
+            title=title,
+            summary=summary,
+            content=content,
+            source_session_id=source_session_id,
+            confidence=confidence,
+            status=status,
+        )
+        self.memories.append(item)
+        return item
 
 
 class FakeSessionStore:
@@ -52,3 +80,62 @@ def test_build_memory_context_includes_three_layers():
 def test_estimate_tokens_handles_mixed_text():
     assert estimate_tokens("hello world") > 0
     assert estimate_tokens("中文内容") >= 4
+
+
+def test_extract_persistent_memory_candidates_creates_pending():
+    class FakeLLM:
+        def generate(self, system_prompt, user_message):
+            return """
+            [
+              {
+                "memory_type": "feedback",
+                "title": "prefer-short",
+                "summary": "用户希望回答更短",
+                "content": "用户反馈后续回答应更短、更直接。",
+                "confidence": 0.9
+              }
+            ]
+            """
+
+    store = FakeMemoryStore()
+    service = MemoryService(store, FakeSessionStore(), FakeLLM())
+
+    items = service.extract_persistent_memory_candidates("s1", "以后短一点", "好的")
+
+    assert len(items) == 1
+    assert items[0].status == MemoryStatus.PENDING
+    assert items[0].source_session_id == "s1"
+
+
+def test_extract_persistent_memory_candidates_ignores_invalid_json():
+    class FakeLLM:
+        def generate(self, system_prompt, user_message):
+            return "not json"
+
+    service = MemoryService(FakeMemoryStore(), FakeSessionStore(), FakeLLM())
+
+    assert service.extract_persistent_memory_candidates("s1", "q", "a") == []
+
+
+def test_extract_persistent_memory_candidates_skips_duplicates():
+    class FakeLLM:
+        def generate(self, system_prompt, user_message):
+            return """
+            [{
+              "memory_type": "feedback",
+              "title": "concise",
+              "summary": "回复保持简洁",
+              "content": "用户偏好简洁直接的回答。",
+              "confidence": 0.95
+            }]
+            """
+
+    service = MemoryService(FakeMemoryStore(), FakeSessionStore(), FakeLLM())
+
+    assert service.extract_persistent_memory_candidates("s1", "q", "a") == []
+
+
+def test_extract_persistent_memory_candidates_without_llm_is_noop():
+    service = MemoryService(FakeMemoryStore(), FakeSessionStore(), None)
+
+    assert service.extract_persistent_memory_candidates("s1", "q", "a") == []

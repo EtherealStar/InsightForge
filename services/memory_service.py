@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import structlog
@@ -154,6 +155,97 @@ class MemoryService:
             status=MemoryStatus.PENDING,
         )
 
+    def extract_persistent_memory_candidates(
+        self,
+        session_id: str,
+        latest_question: str,
+        latest_answer: str,
+    ) -> list[PersistentMemory]:
+        """从最近一轮普通问答中提取待确认持久记忆候选。"""
+        if not self.llm_client:
+            return []
+        if not latest_question.strip() or not latest_answer.strip():
+            return []
+
+        payload = {
+            "latest_question": latest_question,
+            "latest_answer": latest_answer,
+        }
+        try:
+            raw = self.llm_client.generate(
+                MEMORY_CANDIDATE_EXTRACT_PROMPT,
+                json.dumps(payload, ensure_ascii=False),
+            )
+            candidates = _parse_candidate_json(raw)
+        except Exception as e:
+            logger.warning(
+                "memory.candidate_extract_failed",
+                session_id=session_id,
+                error=str(e),
+            )
+            return []
+
+        created: list[PersistentMemory] = []
+        for candidate in candidates[:3]:
+            try:
+                memory_type = MemoryType(str(candidate.get("memory_type") or ""))
+                title = _clean_text(candidate.get("title"), 80)
+                summary = _clean_text(candidate.get("summary"), 200)
+                content = _clean_text(candidate.get("content"), 2000)
+                confidence = _to_confidence(candidate.get("confidence"))
+                if not title or not summary or not content:
+                    continue
+                if confidence is not None and confidence < 0.55:
+                    continue
+                if self._is_duplicate_candidate(memory_type, title, summary, content):
+                    continue
+                created.append(
+                    self.create_memory_candidate(
+                        memory_type=memory_type,
+                        title=title,
+                        summary=summary,
+                        content=content,
+                        source_session_id=session_id,
+                        confidence=confidence,
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    "memory.candidate_create_skipped",
+                    session_id=session_id,
+                    error=str(e),
+                )
+        return created
+
+    def _is_duplicate_candidate(
+        self,
+        memory_type: MemoryType,
+        title: str,
+        summary: str,
+        content: str,
+    ) -> bool:
+        candidate_key = _normalize_for_dedupe(f"{title} {summary} {content}")
+        if not candidate_key:
+            return True
+        existing = []
+        for status in (MemoryStatus.PENDING, MemoryStatus.ACTIVE):
+            existing.extend(
+                self.memory_store.list_persistent_memories(
+                    status=status,
+                    memory_type=memory_type,
+                )
+            )
+        for item in existing:
+            existing_key = _normalize_for_dedupe(
+                f"{item.title} {item.summary} {item.content}"
+            )
+            if candidate_key == existing_key:
+                return True
+            shorter, longer = sorted((candidate_key, existing_key), key=len)
+            if len(shorter) >= 20 and shorter in longer:
+                return True
+        return False
+
     def _summarize_session(self, session: AgentSession) -> str:
         template = session.summary_template or DEFAULT_SESSION_MEMORY_PROMPT
         payload = {
@@ -168,6 +260,16 @@ class MemoryService:
 
 
 DEFAULT_SESSION_MEMORY_PROMPT = """你是会话记忆压缩器。请根据现有摘要、消息和事件，输出结构化会话记忆。保留当前任务、待跟进线索、已检索查询、已访问来源、关键发现、输出成果、错误与修正、会话工作日志。使用中文，简洁但信息完整。"""
+
+
+MEMORY_CANDIDATE_EXTRACT_PROMPT = """你是 Logos 的持久记忆候选提取器。
+从最近一轮用户问题和助手回答中，只提取值得跨会话保存的长期信息，最多 3 条。
+只允许提取：
+1. user: 用户长期偏好、稳定背景、工作方式偏好。
+2. feedback: 用户对回答质量、格式、工具使用的反馈。
+3. project: 需要后续持续跟踪的项目目标、约束、决策。
+必须跳过临时新闻事实、一次性问题、账号密钥、令牌、密码、隐私凭据、低置信内容。
+只输出 JSON 数组，不要 Markdown。每项字段固定为 memory_type/title/summary/content/confidence。confidence 是 0 到 1 的数字。没有可保存内容时输出 []。"""
 
 
 def estimate_tokens(text: str) -> int:
@@ -196,3 +298,35 @@ def _next_compact_threshold(session: AgentSession) -> int:
 
 def _query_tokens(query: str) -> list[str]:
     return [token for token in query.replace("，", " ").replace("。", " ").split() if token]
+
+
+def _parse_candidate_json(raw: str) -> list[dict[str, Any]]:
+    text = (raw or "").strip()
+    if not text:
+        return []
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    data = json.loads(text)
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _clean_text(value: Any, max_length: int) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text[:max_length].strip()
+
+
+def _to_confidence(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_for_dedupe(value: str) -> str:
+    return re.sub(r"\W+", "", value.lower(), flags=re.UNICODE)

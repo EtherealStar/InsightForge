@@ -1,6 +1,7 @@
 """Query Router 测试。"""
 
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -64,3 +65,35 @@ def test_query_stream_error_event(monkeypatch):
     assert '"event_type": "error"' in text
     assert "stream failed" in text
     assert "data: [DONE]" in text
+
+
+def test_list_query_sessions(monkeypatch):
+    session = SimpleNamespace(
+        id="s1",
+        topic="hello",
+        status=SimpleNamespace(value="active"),
+        session_type="general_query",
+        messages=[{"role": "user", "content": "hi"}],
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    )
+    fake_store = SimpleNamespace(list_sessions=lambda session_type, limit, offset: [session])
+    monkeypatch.setattr(query_router, "_get_session_store", lambda: fake_store)
+
+    client = TestClient(_build_app())
+    resp = client.get("/api/query/sessions")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["items"][0]["session_id"] == "s1"
+    assert body["items"][0]["last_message_preview"] == "hi"
+
+
+def test_get_query_session_404_for_missing(monkeypatch):
+    fake_store = SimpleNamespace(get_session=lambda session_id: None)
+    monkeypatch.setattr(query_router, "_get_session_store", lambda: fake_store)
+
+    client = TestClient(_build_app())
+    resp = client.get("/api/query/sessions/missing")
+
+    assert resp.status_code == 404

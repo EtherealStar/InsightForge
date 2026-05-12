@@ -64,6 +64,7 @@ const navItems = [
   { path: '/briefs', icon: '', label: '新闻简报' },
   { path: '/newsapi', icon: '', label: '在线搜索' },
   { path: '/query', icon: '', label: '智能助手' },
+  { path: '/memory', icon: '', label: '记忆管理' },
   { path: '/webhook', icon: '', label: '消息推送' },
   { path: '/settings', icon: '', label: '功能设置' },
   { path: '/config', icon: '', label: 'API 配置' },

@@ -200,6 +200,13 @@ class AgentSessionStoreProtocol(Protocol):
 
     def get_session(self, session_id: str) -> AgentSession | None: ...
 
+    def list_sessions(
+        self,
+        session_type: str = "general_query",
+        limit: int = 30,
+        offset: int = 0,
+    ) -> list[AgentSession]: ...
+
     def save_plan(
         self,
         session_id: str,

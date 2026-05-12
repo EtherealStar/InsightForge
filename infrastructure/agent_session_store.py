@@ -48,6 +48,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_sessions_created_at
     ON agent_sessions(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_session_type
     ON agent_sessions(session_type);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_type_updated
+    ON agent_sessions(session_type, updated_at DESC);
 
 COMMENT ON TABLE agent_sessions IS 'Agent 会话记录。保存 Plan Execute 深度研究的消息、计划、todo、执行事件与最终报告索引。';
 COMMENT ON COLUMN agent_sessions.id IS '会话 UUID，同时作为前端会话标识和 Agent run_id';
@@ -194,6 +196,34 @@ class AgentSessionStore:
                 error=str(e),
             )
             return None
+
+    def list_sessions(
+        self,
+        session_type: str = "general_query",
+        limit: int = 30,
+        offset: int = 0,
+    ) -> list[AgentSession]:
+        limit = max(1, min(int(limit), 100))
+        offset = max(0, int(offset))
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT * FROM agent_sessions
+                           WHERE session_type = %s
+                           ORDER BY updated_at DESC
+                           LIMIT %s OFFSET %s""",
+                        (session_type, limit, offset),
+                    )
+                    rows = cur.fetchall()
+            return [self._row_to_session(row) for row in rows]
+        except Exception as e:
+            logger.error(
+                "agent_session_store.list_failed",
+                session_type=session_type,
+                error=str(e),
+            )
+            return []
 
     def save_plan(
         self,

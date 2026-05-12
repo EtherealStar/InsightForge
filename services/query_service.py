@@ -1,6 +1,8 @@
 """编排 ReAct Agent 查询流程"""
 from typing import Iterator
 
+import structlog
+
 from core.protocols import (
     ArticleStoreProtocol,
     AgentSessionStoreProtocol,
@@ -9,6 +11,8 @@ from core.protocols import (
     EmbeddingClientProtocol,
 )
 from services.memory_service import MemoryService
+
+logger = structlog.get_logger(__name__)
 
 
 class QueryService:
@@ -99,7 +103,7 @@ class QueryService:
             if answer:
                 self.session_store.append_message(session.id, {"role": "assistant", "content": answer})
             if self.memory_service:
-                self.memory_service.maybe_compact_session(session.id)
+                self._after_answer_persisted(session.id, question, answer)
 
     def _ensure_general_session(
         self,
@@ -152,4 +156,27 @@ class QueryService:
         if result.answer:
             self.session_store.append_message(session_id, {"role": "assistant", "content": result.answer})
         if self.memory_service:
+            self._after_answer_persisted(session_id, question, result.answer)
+
+    def _after_answer_persisted(
+        self,
+        session_id: str,
+        question: str,
+        answer: str | None,
+    ) -> None:
+        if not self.memory_service:
+            return
+        try:
             self.memory_service.maybe_compact_session(session_id)
+            if answer:
+                self.memory_service.extract_persistent_memory_candidates(
+                    session_id=session_id,
+                    latest_question=question,
+                    latest_answer=answer,
+                )
+        except Exception as e:
+            logger.warning(
+                "memory.candidate_extract_failed",
+                session_id=session_id,
+                error=str(e),
+            )
