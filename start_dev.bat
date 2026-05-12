@@ -5,6 +5,9 @@ echo ========================================================
 echo Starting Logos Development Environment...
 echo ========================================================
 
+:: Set Python path so all modules can be found
+set PYTHONPATH=D:\study\Logos
+
 :: Start infrastructure via Docker Compose
 echo Starting infrastructure (PostgreSQL + pgvector, Redis)...
 docker compose up -d

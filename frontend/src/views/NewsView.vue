@@ -2,7 +2,7 @@
   <div class="news-view">
     <div class="page-header">
       <div>
-        <h1>📰 新闻展示</h1>
+        <h1> 新闻展示</h1>
         <p class="subtitle">浏览已抓取的新闻，支持按来源和语言筛选</p>
       </div>
       <div class="header-actions">
@@ -11,7 +11,7 @@
         </button>
         <button class="btn btn-primary" @click="runPipeline" :disabled="pipelineLoading || selectionMode">
           <span v-if="pipelineLoading" class="spinner"></span>
-          {{ pipelineLoading ? '抓取中...' : '🔄 立即抓取' }}
+          {{ pipelineLoading ? '抓取中...' : ' 立即抓取' }}
         </button>
       </div>
     </div>
@@ -24,10 +24,10 @@
       <div class="batch-buttons">
         <button class="btn btn-sm btn-accent" :disabled="!selectedIds.length || summarizing" @click="batchResummarize">
           <span v-if="summarizing" class="spinner"></span>
-          {{ summarizing ? 'AI 处理中...' : '🤖 AI 重新摘要' }}
+          {{ summarizing ? 'AI 处理中...' : ' AI 重新摘要' }}
         </button>
         <button class="btn btn-sm btn-danger" :disabled="!selectedIds.length" @click="batchDelete" style="margin-left: 8px;">
-          🗑 删除所选
+           删除所选
         </button>
         <button class="btn btn-sm" @click="selectedIds = []" style="margin-left: 8px;" v-if="selectedIds.length">
           清空
@@ -38,7 +38,7 @@
     <!-- 筛选栏 -->
     <div class="filter-bar card">
       <div class="filter-group">
-        <label class="form-label">🔍 搜索</label>
+        <label class="form-label"> 搜索</label>
         <input
           v-model="keyword"
           class="input"
@@ -113,7 +113,7 @@
     </div>
 
     <div v-else class="empty-state">
-      <span class="emoji">📭</span>
+      <span class="emoji"></span>
       <p>暂无新闻数据</p>
       <p>点击「立即抓取」按钮获取最新新闻</p>
     </div>

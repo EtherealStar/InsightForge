@@ -8,14 +8,14 @@
             <span class="tag">{{ languageLabel }}</span>
             <span class="detail-time">{{ formattedDate }}</span>
           </div>
-          <button class="btn btn-icon" @click="$emit('close')" title="关闭">✕</button>
+          <button class="btn btn-icon" @click="$emit('close')" title="关闭"></button>
         </div>
 
         <h1 class="detail-title">{{ article.title }}</h1>
 
         <div class="detail-actions">
           <a :href="article.url" target="_blank" rel="noopener" class="btn btn-sm">
-            🔗 查看原文
+             查看原文
           </a>
         </div>
 

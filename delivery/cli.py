@@ -39,13 +39,13 @@ def cmd_pipeline(config: AppConfig):
         markdown_output_path=config.markdown_output_path,
     )
     result = service.run()
-    print(f"\n✅ Pipeline 完成:")
+    print(f"\n Pipeline 完成:")
     print(f"   抓取: {result['fetched']} 篇")
     print(f"   新增: {result['new']} 篇")
     print(f"   分块: {result.get('chunks', 0)} 子 chunks + {result.get('parent_chunks', 0)} 父 chunks")
     print(f"   向量化: {result['embedded']} 个子 chunks")
     if result["errors"]:
-        print(f"   ⚠ 错误: {result['errors']}")
+        print(f"    错误: {result['errors']}")
 
 
 def cmd_brief(config: AppConfig):
@@ -55,7 +55,7 @@ def cmd_brief(config: AppConfig):
 
     service = BriefService(article_store, llm_client, config.output_path)
     brief = service.generate(hours=24)
-    print(f"\n✅ 日报已生成:")
+    print(f"\n 日报已生成:")
     print(f"   文章数: {brief.article_count}")
     print(f"   生成时间: {brief.generated_at}")
     print(f"\n{brief.content_markdown}")
@@ -72,7 +72,7 @@ def cmd_ask(config: AppConfig, question: str):
         article_store, vector_store, llm_client, embedding_client
     )
 
-    print(f"\n🔍 正在检索并分析...\n")
+    print(f"\n 正在检索并分析...\n")
     final_answer = ""
     for event in service.answer_agent_stream(question):
         if event.event_type == "answer":
@@ -86,7 +86,7 @@ def cmd_stats(config: AppConfig):
     article_store = create_article_store(config)
     stats = article_store.get_stats()
 
-    print(f"\n📊 数据库统计:")
+    print(f"\n 数据库统计:")
     print(f"   文章总数: {stats['total']}")
     print(f"   已向量化: {stats['embedded']}")
     print(f"   今日新增: {stats['today_new']}")
@@ -98,7 +98,7 @@ def cmd_cleanup(config: AppConfig):
     """手动清理旧文章"""
     article_store = create_article_store(config)
     deleted = article_store.cleanup_old_articles(config.article_retention_days)
-    print(f"\n🗑️ 清理完成: 删除 {deleted} 篇旧文章（保留 {config.article_retention_days} 天）")
+    print(f"\n 清理完成: 删除 {deleted} 篇旧文章（保留 {config.article_retention_days} 天）")
 
 
 def main():

@@ -4,7 +4,7 @@
 
 ---
 
-系统通过 5 个 `typing.Protocol` 定义接口契约，是**架构可替换性的基石**。所有 Protocol 均标记为 `@runtime_checkable`，定义在 `core/protocols.py`。
+系统通过 `typing.Protocol` 定义接口契约，是**架构可替换性的基石**。所有 Protocol 均标记为 `@runtime_checkable`，定义在 `core/protocols.py`。
 
 ---
 
@@ -155,3 +155,38 @@ class RerankClientProtocol(Protocol):
 ## Protocol 与实际使用的差异
 
 > **已知问题**：`ArticleStoreProtocol` 仅定义了 7 个基础方法，但实际代码依赖了超过 15 个额外方法。这意味着 Protocol 的"可替换性"承诺在当前阶段无法完全兑现。详见 [技术债务追踪器](../exec-plans/tech-debt-tracker.md) §2.1。
+
+---
+
+## 6. AgentSessionStoreProtocol
+
+通用 Agent 会话存储，当前实现为 `AgentSessionStore`，使用 PostgreSQL 作为权威存储，Redis 作为热缓存。该接口同时服务普通问答和 Plan Execute 深度研究。
+
+```python
+class AgentSessionStoreProtocol(Protocol):
+    def create_general_session(self, topic: str, messages: list[dict] | None = None) -> AgentSession: ...
+    def create_session(self, topic: str, plan: dict | str | None, todos: list[ResearchTodo], messages: list[dict] | None = None) -> AgentSession: ...
+    def get_session(self, session_id: str) -> AgentSession | None: ...
+    def append_event(self, session_id: str, event: dict) -> None: ...
+    def append_message(self, session_id: str, message: dict) -> None: ...
+    def update_summary(self, session_id: str, summary: str, token_count: int, last_compacted_tokens: int, compact_failures: int = 0) -> AgentSession: ...
+```
+
+普通问答使用 `session_type=general_query` 与 `active` 状态；深度研究继续使用 `research_plan_execute` 与 planned/approved/running/completed 状态流。
+
+---
+
+## 7. MemoryStoreProtocol
+
+三层记忆系统存储接口。当前实现为 `MemoryStore`，数据库为准。
+
+```python
+class MemoryStoreProtocol(Protocol):
+    def get_active_core_memories(self, kind: str | None = None) -> list[CoreMemoryRevision]: ...
+    def create_core_memory_revision(self, kind: str, title: str, content: str) -> CoreMemoryRevision: ...
+    def list_memory_index(self, memory_types: list[MemoryType] | None = None) -> list[MemoryIndexItem]: ...
+    def list_persistent_memories(self, status: MemoryStatus | None = None, memory_type: MemoryType | None = None) -> list[PersistentMemory]: ...
+    def update_persistent_memory_status(self, memory_id: str, status: MemoryStatus) -> PersistentMemory: ...
+```
+
+核心记忆采用版本化 revision；持久记忆默认 pending，用户确认后变为 active 并进入 MEMORY 索引。

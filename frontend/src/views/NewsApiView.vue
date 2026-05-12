@@ -2,7 +2,7 @@
   <div class="newsapi-view">
     <div class="page-header">
       <div>
-        <h1>🌍 在线新闻检索</h1>
+        <h1> 在线新闻检索</h1>
         <p class="subtitle">通过 NewsAPI 实时检索全网新闻或头条</p>
       </div>
     </div>
@@ -20,7 +20,7 @@
     <!-- 筛选栏 -->
     <div class="filter-bar card">
       <div class="filter-group">
-        <label class="form-label">🔍 关键词</label>
+        <label class="form-label"> 关键词</label>
         <input
           v-model="keyword"
           class="input"
@@ -104,7 +104,7 @@
           <div class="card-actions">
             <!-- Save Button -->
             <button class="btn btn-sm btn-secondary" @click="saveArticle(article)" :disabled="savingMap[article.url]">
-              {{ savingMap[article.url] ? '保存中...' : '💾 收藏到数据库' }}
+              {{ savingMap[article.url] ? '保存中...' : ' 收藏到数据库' }}
             </button>
           </div>
         </div>
@@ -112,7 +112,7 @@
     </div>
 
     <div v-else class="empty-state">
-      <span class="emoji">🌍</span>
+      <span class="emoji"></span>
       <p>没有找到相关在线新闻</p>
       <p>调整关键词重试，或者检查在"设置"中是否配置了 NewsAPI 密钥。</p>
     </div>

@@ -2,18 +2,18 @@
   <div class="config-view">
     <div class="page-header">
       <div>
-        <h1>🔧 API 配置</h1>
+        <h1> API 配置</h1>
         <p class="subtitle">编辑 .env 文件，配置 LLM 和 Embedding API</p>
       </div>
       <button class="btn btn-primary" @click="saveConfig" :disabled="saving">
-        {{ saving ? '保存中...' : '💾 保存配置' }}
+        {{ saving ? '保存中...' : ' 保存配置' }}
       </button>
     </div>
 
     <div class="config-grid" v-if="config">
       <!-- LLM 配置 -->
       <section class="card config-section">
-        <h2>🤖 LLM 模型配置</h2>
+        <h2> LLM 模型配置</h2>
         <p class="section-desc">选择 AI 模型提供商并配置连接参数</p>
 
         <!-- Provider 选择 -->
@@ -60,7 +60,7 @@
                 <option v-for="m in fetchedModels" :key="m" :value="m">{{ m }}</option>
               </select>
               <button class="btn btn-secondary" @click="fetchModelList" :disabled="fetchingModels" type="button" title="向服务器发送以获取可用模型列表">
-                {{ fetchingModels ? '获取中...' : '⚡ 获取模型列表' }}
+                {{ fetchingModels ? '获取中...' : ' 获取模型列表' }}
               </button>
             </div>
             <div v-if="fetchedModels.length" class="manual-input-tip" @click="fetchedModels = []">
@@ -72,7 +72,7 @@
 
       <!-- Embedding 配置 -->
       <section class="card config-section">
-        <h2>🧬 Embedding 配置</h2>
+        <h2> Embedding 配置</h2>
         <p class="section-desc">配置向量化模型（OpenAI 兼容格式）</p>
 
         <div class="config-fields">
@@ -98,7 +98,7 @@
 
       <!-- Rerank 重排序配置 -->
       <section class="card config-section">
-        <h2>🔄 Rerank 重排序配置</h2>
+        <h2> Rerank 重排序配置</h2>
         <p class="section-desc">配置 Rerank 大模型对检索结果精排，提升知识库查询准确性。支持 Jina、SiliconFlow、Cohere 等 Rerank API</p>
 
         <div class="config-fields">
@@ -145,7 +145,7 @@
 
       <!-- 其他设置 -->
       <section class="card config-section">
-        <h2>📻 NewsAPI 配置</h2>
+        <h2> NewsAPI 配置</h2>
         <p class="section-desc">配置外部在线新闻抓取的 API Key（需在 newsapi.org 注册）</p>
         <div class="config-fields">
           <div class="form-group">
@@ -157,7 +157,7 @@
 
       <!-- 搜索引擎配置 -->
       <section class="card config-section">
-        <h2>🔍 搜索引擎配置</h2>
+        <h2> 搜索引擎配置</h2>
         <p class="section-desc">配置 Web 搜索引擎 API。DuckDuckGo 免费无需配置，Tavily 需要 API Key（可在 <a href="https://tavily.com" target="_blank">tavily.com</a> 获取）</p>
 
         <div class="config-fields">
@@ -181,7 +181,7 @@
 
       <!-- AI 摘要配置 -->
       <section class="card config-section">
-        <h2>🧠 AI 摘要配置</h2>
+        <h2> AI 摘要配置</h2>
         <p class="section-desc">抓取新闻后自动由 AI 生成摘要和分类标签。可复用主 LLM API 或配置独立的摘要专用 API</p>
 
         <div class="config-fields">
@@ -235,7 +235,7 @@
 
       <!-- 其他设置 -->
       <section class="card config-section">
-        <h2>📝 其他设置</h2>
+        <h2> 其他设置</h2>
         <div class="config-fields">
           <div class="form-group">
             <label class="form-label">日志级别</label>

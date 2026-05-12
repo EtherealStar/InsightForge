@@ -1,4 +1,4 @@
-# Logos 架构文档
+﻿# Logos 架构文档
 
 > **项目阶段**：Demo+ （前后端分离架构 + ReAct Agent + 深度研究 + Web 搜索 + AI 摘要 + Rerank + 混合检索 RAG + Webhook 推送）
 
@@ -23,7 +23,7 @@ Logos 是一个**个人 AI 新闻分析助手**，具备以下核心能力：
 
 1. **定时 Pipeline**：自动从多个数据源（RSS + 网页爬取）抓取内容 → Markdown 转换 + 元数据提取 → 去重存储 → AI 摘要打标签 → 父子分块 + 向量化 + jieba 分词全文索引 → 每日自动生成新闻简报
 2. **ReAct Agent 问答**：用户通过自然语言提问，ReAct Agent 自主推理并决策调用工具（语义检索、统计查询、全文阅读、Web 搜索、简报生成等），基于工具返回的真实数据生成回答
-3. **深度研究**：专用深度研究模式，Agent 使用更多推理步数（max_steps=15）执行多步研究任务，自动保存研究报告
+3. **深度研究**：Plan-Execute 深度研究模式，先生成研究计划供用户审阅，确认后 ReAct Agent 按计划执行多步研究任务，自动保存研究报告
 4. **Web 搜索**：多搜索引擎并发搜索（DuckDuckGo + Tavily），程序化去重聚合
 5. **NewsAPI 在线搜索**：代理 NewsAPI 接口，支持全球新闻搜索和热门头条
 6. **Webhook 推送**：将新闻简报/研究报告通过 Webhook 推送到飞书、钉钉、企业微信、Telegram、ntfy 等平台
@@ -67,6 +67,7 @@ Logos 是一个**个人 AI 新闻分析助手**，具备以下核心能力：
 │                  Agent 智能体层 (Agent/React + Tools)                │
 │   ReActAgent (推理-行动循环)  │  ToolRegistry (注册中心)           │
 │   6 个内置工具               │  ToolChain / AsyncToolExecutor     │
+│   三层记忆系统：核心记忆 + 持久记忆 + 会话记忆                      │
 ├────────────────────────────────────────────────────────────────────┤
 │                     应用服务层 (Services)                           │
 │   PipelineService │ QueryService │ BriefService │ WebhookService   │
@@ -81,7 +82,7 @@ Logos 是一个**个人 AI 新闻分析助手**，具备以下核心能力：
 │   NewsCollector │ WebCrawler │ WebSearchClients │ RerankClient     │
 ├────────────────────────────────────────────────────────────────────┤
 │                    横切关注点 (Core)                                │
-│   AppConfig │ Protocols (5) │ Factory (8) │ ConfigManager          │
+│   AppConfig │ Protocols │ Factory │ ConfigManager                    │
 │   Exceptions │ Logging │ Retry                                     │
 ├────────────────────────────────────────────────────────────────────┤
 │                     调度层 (Scheduler)                              │
@@ -106,14 +107,16 @@ Logos/
 ├── core/                           # 横切关注点
 │   ├── config.py                   # AppConfig (pydantic-settings)
 │   ├── config_manager.py           # ConfigManager 热重载单例
-│   ├── protocols.py                # 5 个 Protocol 接口契约
-│   ├── factory.py                  # 8 个工厂函数
+│   ├── protocols.py                # Protocol 接口契约
+│   ├── factory.py                  # 工厂函数
 │   ├── exceptions.py               # 统一异常层次
 │   ├── logging.py                  # structlog 配置
 │   └── retry.py                    # @with_retry 指数退避
 │
 ├── models/                         # 领域模型 (纯 dataclass)
 │   ├── article.py                  # ArticleEntity + ArticleDTO + Mapper
+│   ├── agent_session.py            # 通用 Agent 会话 + 深度研究 todo
+│   ├── memory.py                   # 三层记忆系统数据模型
 │   ├── brief.py                    # DailyBrief
 │   ├── chunk.py                    # Chunk + ParentChunk
 │   └── search.py                   # SearchQuery + SearchResult + ChunkSearchResult
@@ -121,6 +124,8 @@ Logos/
 ├── infrastructure/                 # 基础设施层 (实现 Protocol)
 │   ├── collector.py                # NewsCollector (feedparser + trafilatura)
 │   ├── postgres_article_store.py   # PostgresArticleStore
+│   ├── agent_session_store.py      # 通用 Agent session: PostgreSQL + Redis
+│   ├── memory_store.py             # 核心记忆 + 持久记忆 PostgreSQL 存储
 │   ├── pgvector_store.py           # PgVectorStore (chunk 级别)
 │   ├── chunking_service.py         # ChunkingService (Markdown 父子分块)
 │   ├── keyword_search_service.py   # KeywordSearchService (PostgreSQL FTS)
@@ -135,6 +140,7 @@ Logos/
 ├── services/                       # 应用服务层
 │   ├── pipeline_service.py         # 抓取→存储→摘要→分块→向量化
 │   ├── query_service.py            # ReAct Agent 问答入口
+│   ├── memory_service.py           # 三层记忆上下文构建与会话压缩
 │   ├── brief_service.py            # 日报生成
 │   ├── webhook_service.py          # 多平台推送
 │   ├── summary_service.py          # AI 批量摘要
@@ -189,7 +195,7 @@ Logos/
 
 ## 5. 核心接口契约 (Protocol)
 
-系统通过 5 个 `typing.Protocol` 定义接口，实现基础设施层的可替换性：
+系统通过 `typing.Protocol` 定义接口，实现基础设施层的可替换性：
 
 | Protocol | 核心方法 | 当前实现 |
 |---|---|---|
@@ -198,6 +204,8 @@ Logos/
 | `LLMClientProtocol` | `generate`, `generate_stream`, `generate_with_history`, `generate_with_history_stream` | 4 个客户端 |
 | `EmbeddingClientProtocol` | `embed` | `OpenAICompatibleEmbeddingClient` |
 | `RerankClientProtocol` | `rerank` | `OpenAICompatibleRerankClient` |
+| `AgentSessionStoreProtocol` | `create_general_session`, `create_session`, `append_event`, `append_message`, `update_summary` | `AgentSessionStore` |
+| `MemoryStoreProtocol` | `get_active_core_memories`, `list_memory_index`, `create_persistent_memory` | `MemoryStore` |
 
 → 完整接口设计与实现说明：[docs/design-docs/protocol-contracts.md](docs/design-docs/protocol-contracts.md)
 
@@ -217,13 +225,15 @@ Logos/
     → EmbeddingClient.embed()                   子 chunk 向量化
     → PgVectorStore.add_chunks()                写入 PostgreSQL child_chunks
     → PostgresArticleStore.save_parent_chunks() 写入 PostgreSQL parent_chunks
-    → mark_embedded()                           ✓ 完成
+    → mark_embedded()                            完成
 ```
 
 ### 6.2 ReAct Agent 问答数据流
 
 ```
 用户问题 → QueryService.answer_agent_stream()
+    → AgentSessionStore.create_general_session()/get_session()
+    → MemoryService.build_memory_context()
     → ReActAgent.run_stream(question)
     → while steps < max_steps:
         → LLM.generate_with_history(messages)
@@ -258,11 +268,25 @@ Logos/
 ### 6.5 深度研究
 
 ```
-研究主题 → DeepResearchService.research_stream()
-         → ReActAgent (max_steps=15, 专用 prompt)
+研究主题 → PlanExecuteRunner.generate_plan() → 用户审阅确认
+         → PlanExecuteRunner.execute() → MemoryService.build_memory_context()
+         → ReActAgent (max_steps=15)
          → 多步: 搜知识库 → 读全文 → Web 搜索 → 综合报告
-         → 自动保存 output/research/
+         → DeepResearchService 自动保存 output/research/
 ```
+
+### 6.6 三层记忆系统
+
+```
+core_memory_revisions(active)
+    + persistent_memories(active → MEMORY 索引)
+    + agent_sessions.summary
+    → 注入普通问答 / 深度研究 Agent system prompt
+```
+
+- 核心记忆：全局 Agent 工作规则、工具说明、摘要模板，采用版本化 revision，不物理删除。
+- 持久记忆：`user` / `feedback` / `project` 三类跨会话记忆，默认 `pending`，用户确认后进入 MEMORY 索引。
+- 会话记忆：普通问答和深度研究共用 `agent_sessions`；达到 10k token 后开始摘要，后续每 5k token 更新，失败 3 次后退避为 10k。
 
 → 完整 API 路由参考：[docs/product-specs/api-reference.md](docs/product-specs/api-reference.md)
 

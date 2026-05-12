@@ -98,60 +98,60 @@
 
 ```
 Logos/
-├── models/                         # ✅ 不变
+├── models/                         #  不变
 │   ├── article.py
 │   ├── brief.py
 │   └── search.py
 │
-├── core/                           # 🔄 升级
+├── core/                           #  升级
 │   ├── config.py                   # 新增: 多环境支持, PG DSN, Qdrant URL 等
-│   ├── protocols.py                # ✅ 不变
-│   ├── factory.py                  # 🔄 新增: postgresql / qdrant 分支
-│   ├── exceptions.py               # ✅ 不变
-│   ├── logging.py                  # 🔄 替换为 structlog
-│   └── retry.py                    # ✅ 不变
+│   ├── protocols.py                #  不变
+│   ├── factory.py                  #  新增: postgresql / qdrant 分支
+│   ├── exceptions.py               #  不变
+│   ├── logging.py                  #  替换为 structlog
+│   └── retry.py                    #  不变
 │
-├── infrastructure/                 # 🔄 新增实现
-│   ├── collector.py                # 🔄 并发 ThreadPoolExecutor + NewsAPI + 网页爬虫
-│   ├── article_store.py            # 🔄 新增 PostgreSQLArticleStore
-│   ├── vector_store.py             # 🔄 新增 QdrantVectorStore
-│   ├── llm_client.py               # ✅ 不变
-│   └── embedding_client.py         # ✅ 不变
+├── infrastructure/                 #  新增实现
+│   ├── collector.py                #  并发 ThreadPoolExecutor + NewsAPI + 网页爬虫
+│   ├── article_store.py            #  新增 PostgreSQLArticleStore
+│   ├── vector_store.py             #  新增 QdrantVectorStore
+│   ├── llm_client.py               #  不变
+│   └── embedding_client.py         #  不变
 │
-├── services/                       # 🔄 局部升级
-│   ├── pipeline_service.py         # ✅ 不变（依赖 Protocol，自动适配新实现）
-│   ├── query_service.py            # 🔄 search() 升级为 RRF 混合检索
-│   └── brief_service.py            # ✅ 不变
+├── services/                       #  局部升级
+│   ├── pipeline_service.py         #  不变（依赖 Protocol，自动适配新实现）
+│   ├── query_service.py            #  search() 升级为 RRF 混合检索
+│   └── brief_service.py            #  不变
 │
-├── delivery/                       # 🆕 新增 Telegram Bot + Webhook
-│   ├── server.py                   # ✅ 保持
-│   ├── cli.py                      # ✅ 保持
-│   ├── telegram_bot.py             # 🆕 Telegram 推送 + 命令
-│   ├── webhook_delivery.py         # 🆕 全平台 Webhook + ntfy
-│   └── api/                        # ✅ 保持
+├── delivery/                       #  新增 Telegram Bot + Webhook
+│   ├── server.py                   #  保持
+│   ├── cli.py                      #  保持
+│   ├── telegram_bot.py             #  Telegram 推送 + 命令
+│   ├── webhook_delivery.py         #  全平台 Webhook + ntfy
+│   └── api/                        #  保持
 │
-├── scheduler/                      # 🔄 替换为 Celery
-│   ├── celery_app.py               # 🆕 Celery 应用配置 + beat_schedule
-│   ├── tasks.py                    # 🆕 Celery 任务定义
-│   └── scheduler.py                # ✅ 保留 APScheduler 版本作后备
+├── scheduler/                      #  替换为 Celery
+│   ├── celery_app.py               #  Celery 应用配置 + beat_schedule
+│   ├── tasks.py                    #  Celery 任务定义
+│   └── scheduler.py                #  保留 APScheduler 版本作后备
 │
-├── infra/                          # 🆕 部署配置
+├── infra/                          #  部署配置
 │   ├── docker-compose.yml          # PostgreSQL + Redis + Qdrant + Flower
 │   ├── docker-compose.dev.yml      # 开发环境覆写
 │   ├── Dockerfile                  # 应用容器
 │   └── nginx.conf                  # 反向代理 (VPS 部署)
 │
-├── frontend/                       # ✅ 保持（补充统计面板）
+├── frontend/                       #  保持（补充统计面板）
 │
-├── tests/                          # 🔄 扩展
+├── tests/                          #  扩展
 │   ├── test_article_store.py       # 新增 PostgreSQL 测试
 │   ├── test_vector_store.py        # 新增 Qdrant 测试
-│   ├── test_telegram_bot.py        # 🆕
+│   ├── test_telegram_bot.py        # 
 │   └── ...                         # 目标覆盖率 > 80%
 │
 ├── .env.example
-├── .env.dev                        # 🆕 开发环境
-├── .env.prod                       # 🆕 生产环境
+├── .env.dev                        #  开发环境
+├── .env.prod                       #  生产环境
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
@@ -405,12 +405,12 @@ def run_cleanup(): ...
 
 | Protocol | 方法 | 当前实现 | 目标实现 | 接口是否变化 |
 |---|---|---|---|---|
-| `ArticleStoreProtocol` | `save_articles()` | SQLiteArticleStore | PostgreSQLArticleStore | ❌ 不变 |
-| `ArticleStoreProtocol` | `search_by_keyword()` | LIKE 查询 | to_tsquery 全文搜索 | ❌ 不变 |
-| `VectorStoreProtocol` | `add_articles()` | ChromaVectorStore | QdrantVectorStore | ❌ 不变 |
-| `VectorStoreProtocol` | `search()` | 本地向量搜索 | Qdrant Cloud + payload 过滤 | ❌ 不变 |
-| `LLMClientProtocol` | `generate()` | 多后端（4 种） | 多后端（保持不变） | ❌ 不变 |
-| `EmbeddingClientProtocol` | `embed()` | 自定义 API | 自定义 API（保持） | ❌ 不变 |
+| `ArticleStoreProtocol` | `save_articles()` | SQLiteArticleStore | PostgreSQLArticleStore |  不变 |
+| `ArticleStoreProtocol` | `search_by_keyword()` | LIKE 查询 | to_tsquery 全文搜索 |  不变 |
+| `VectorStoreProtocol` | `add_articles()` | ChromaVectorStore | QdrantVectorStore |  不变 |
+| `VectorStoreProtocol` | `search()` | 本地向量搜索 | Qdrant Cloud + payload 过滤 |  不变 |
+| `LLMClientProtocol` | `generate()` | 多后端（4 种） | 多后端（保持不变） |  不变 |
+| `EmbeddingClientProtocol` | `embed()` | 自定义 API | 自定义 API（保持） |  不变 |
 | — | Scheduler | APScheduler | Celery Beat + Worker | N/A (非 Protocol) |
 | — | 检索策略 | 纯语义检索 | RRF 混合检索 | N/A (服务内部逻辑) |
 | — | 推送 | 无 | Telegram Bot + Webhook | N/A (新增 Delivery) |

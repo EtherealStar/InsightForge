@@ -3,7 +3,7 @@
   <aside class="sidebar" :class="{ collapsed: isCollapsed, 'mobile-open': mobileOpen }">
     <div class="sidebar-header">
       <div class="logo">
-        <span class="logo-icon">📰</span>
+        <span class="logo-icon"></span>
         <transition name="fade">
           <span v-if="!isCollapsed" class="logo-text">Logos</span>
         </transition>
@@ -60,13 +60,13 @@ const isCollapsed = ref(false)
 const stats = ref(null)
 
 const navItems = [
-  { path: '/news', icon: '📰', label: '新闻展示' },
-  { path: '/briefs', icon: '📋', label: '新闻简报' },
-  { path: '/newsapi', icon: '🌍', label: '在线搜索' },
-  { path: '/query', icon: '🧠', label: '智能助手' },
-  { path: '/webhook', icon: '🔔', label: '消息推送' },
-  { path: '/settings', icon: '⚙️', label: '功能设置' },
-  { path: '/config', icon: '🔧', label: 'API 配置' },
+  { path: '/news', icon: '', label: '新闻展示' },
+  { path: '/briefs', icon: '', label: '新闻简报' },
+  { path: '/newsapi', icon: '', label: '在线搜索' },
+  { path: '/query', icon: '', label: '智能助手' },
+  { path: '/webhook', icon: '', label: '消息推送' },
+  { path: '/settings', icon: '', label: '功能设置' },
+  { path: '/config', icon: '', label: 'API 配置' },
 ]
 
 onMounted(async () => {

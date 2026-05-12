@@ -4,6 +4,7 @@ from typing import Any, Protocol, Iterator, runtime_checkable
 from models.article import Article
 from models.agent_session import AgentSession, ResearchTodo, SessionStatus
 from models.chunk import Chunk, ParentChunk
+from models.memory import CoreMemoryRevision, MemoryIndexItem, MemoryStatus, MemoryType, PersistentMemory
 from models.search import SearchResult, ChunkSearchResult
 
 
@@ -183,6 +184,12 @@ class RerankClientProtocol(Protocol):
 class AgentSessionStoreProtocol(Protocol):
     """Agent 会话存储（PostgreSQL + Redis 缓存）。"""
 
+    def create_general_session(
+        self,
+        topic: str,
+        messages: list[dict[str, Any]] | None = None,
+    ) -> AgentSession: ...
+
     def create_session(
         self,
         topic: str,
@@ -209,6 +216,17 @@ class AgentSessionStoreProtocol(Protocol):
 
     def append_event(self, session_id: str, event: dict[str, Any]) -> None: ...
 
+    def append_message(self, session_id: str, message: dict[str, Any]) -> None: ...
+
+    def update_summary(
+        self,
+        session_id: str,
+        summary: str,
+        token_count: int,
+        last_compacted_tokens: int,
+        compact_failures: int = 0,
+    ) -> AgentSession: ...
+
     def update_todos(
         self,
         session_id: str,
@@ -225,3 +243,52 @@ class AgentSessionStoreProtocol(Protocol):
     def fail_session(self, session_id: str, error: str) -> AgentSession: ...
 
     def flush_session(self, session_id: str) -> None: ...
+
+
+@runtime_checkable
+class MemoryStoreProtocol(Protocol):
+    """三层记忆存储（PostgreSQL 为准，Redis 可缓存索引）。"""
+
+    def get_active_core_memories(
+        self,
+        kind: str | None = None,
+    ) -> list[CoreMemoryRevision]: ...
+
+    def create_core_memory_revision(
+        self,
+        kind: str,
+        title: str,
+        content: str,
+    ) -> CoreMemoryRevision: ...
+
+    def list_memory_index(
+        self,
+        memory_types: list[MemoryType] | None = None,
+    ) -> list[MemoryIndexItem]: ...
+
+    def list_persistent_memories(
+        self,
+        status: MemoryStatus | None = None,
+        memory_type: MemoryType | None = None,
+    ) -> list[PersistentMemory]: ...
+
+    def get_persistent_memory(self, memory_id: str) -> PersistentMemory | None: ...
+
+    def create_persistent_memory(
+        self,
+        memory_type: MemoryType,
+        title: str,
+        summary: str,
+        content: str,
+        source_session_id: str | None = None,
+        confidence: float | None = None,
+        status: MemoryStatus = MemoryStatus.PENDING,
+    ) -> PersistentMemory: ...
+
+    def update_persistent_memory_status(
+        self,
+        memory_id: str,
+        status: MemoryStatus,
+    ) -> PersistentMemory: ...
+
+    def delete_persistent_memory(self, memory_id: str) -> None: ...

@@ -72,17 +72,50 @@ def get_brief(filename: str):
 
 @router.post("/generate")
 def generate_brief():
-    """手动生成简报（异步执行）"""
+    """手动生成简报（同步执行，直接返回结果或报错）"""
+    from core.config_manager import get_config_manager
+    from services.brief_service import BriefService
+
+    mgr = get_config_manager()
+    mgr.reload()
+
+    # 检查 LLM 客户端是否可用
+    if mgr.llm_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "LLM 未就绪：请检查 .env 中的 llm_provider、llm_api_key、"
+                "llm_base_url 配置是否正确，以及 API 地址是否可访问"
+            ),
+        )
+
+    # 检查文章存储是否可用
+    if mgr.article_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="数据库未就绪：PostgreSQL 连接失败，请检查 pg_dsn 配置",
+        )
+
     try:
-        from scheduler.tasks import run_daily_brief_task
-        task = run_daily_brief_task.apply_async(kwargs={"manual": True})
+        service = BriefService(
+            article_store=mgr.article_store,
+            llm_client=mgr.llm_client,
+            output_path=mgr.config.output_path,
+        )
+        brief = service.generate(hours=mgr.config.brief_fetch_hours)
         return {
             "status": "ok",
-            "task_id": task.id,
-            "message": "简报生成已在后台开始运行"
+            "filename": f"daily_brief_{brief.date.strftime("%Y-%m-%d")}.md",
+            "article_count": brief.article_count,
+            "generated_at": brief.generated_at.isoformat(),
+            "message": f"简报已生成，覆盖 {brief.article_count} 篇文章",
         }
+    except RuntimeError as e:
+        err_msg = str(e)
+        logger.error(f"简报生成失败: {err_msg}")
+        raise HTTPException(status_code=502, detail=err_msg)
     except Exception as e:
-        logger.error(f"简报异步生成失败: {e}")
+        logger.error(f"简报生成失败: {e}")
         raise HTTPException(status_code=500, detail=f"简报生成失败: {e}")
 
 

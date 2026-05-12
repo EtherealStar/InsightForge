@@ -9,8 +9,9 @@ from typing import Any
 
 
 class SessionStatus(StrEnum):
-    """Plan Execute 会话状态。"""
+    """Agent 会话状态。"""
 
+    ACTIVE = "active"
     PLANNED = "planned"
     APPROVED = "approved"
     RUNNING = "running"
@@ -55,6 +56,11 @@ class AgentSession:
     plan: dict[str, Any] | str | None = None
     todos: list[ResearchTodo] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
+    summary: str | None = None
+    summary_template: str | None = None
+    token_count: int = 0
+    last_compacted_tokens: int = 0
+    compact_failures: int = 0
     final_answer: str | None = None
     report_filename: str | None = None
     error: str | None = None
@@ -75,6 +81,11 @@ class AgentSession:
             "plan": self.plan,
             "todos": [todo.to_dict() for todo in self.todos],
             "events": self.events,
+            "summary": self.summary,
+            "summary_template": self.summary_template,
+            "token_count": self.token_count,
+            "last_compacted_tokens": self.last_compacted_tokens,
+            "compact_failures": self.compact_failures,
             "final_answer": self.final_answer,
             "report_filename": self.report_filename,
             "error": self.error,
@@ -100,6 +111,11 @@ class AgentSession:
                 if isinstance(todo, dict)
             ],
             events=list(data.get("events") or []),
+            summary=data.get("summary"),
+            summary_template=data.get("summary_template"),
+            token_count=int(data.get("token_count") or 0),
+            last_compacted_tokens=int(data.get("last_compacted_tokens") or 0),
+            compact_failures=int(data.get("compact_failures") or 0),
             final_answer=data.get("final_answer"),
             report_filename=data.get("report_filename"),
             error=data.get("error"),

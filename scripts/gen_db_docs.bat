@@ -21,7 +21,7 @@ echo [tbls] 生成数据库文档...
 tbls doc --force
 
 if %ERRORLEVEL% equ 0 (
-    echo [tbls] ✓ 文档生成完成! 查看 docs/generated/dbdoc/
+    echo [tbls]  文档生成完成! 查看 docs/generated/dbdoc/
 ) else (
     echo [tbls] ✗ 文档生成失败
     exit /b 1

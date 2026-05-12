@@ -1,0 +1,18 @@
+{
+  "unique_key": "https://www.bbc.com/live",
+  "url": "https://www.bbc.com/live",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "state": 4,
+      "crawlDepth": 1
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": "2026-05-12 11:38:50.901983+00:00"
+}

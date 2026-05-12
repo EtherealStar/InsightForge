@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     plan            JSONB,
     todos           JSONB NOT NULL DEFAULT '[]'::jsonb,
     events          JSONB NOT NULL DEFAULT '[]'::jsonb,
+    summary         TEXT,
+    summary_template TEXT,
+    token_count     INTEGER NOT NULL DEFAULT 0,
+    last_compacted_tokens INTEGER NOT NULL DEFAULT 0,
+    compact_failures INTEGER NOT NULL DEFAULT 0,
     final_answer    TEXT,
     report_filename TEXT,
     error           TEXT,
@@ -53,6 +58,10 @@ COMMENT ON COLUMN agent_sessions.messages IS '会话消息历史，OpenAI messag
 COMMENT ON COLUMN agent_sessions.plan IS 'AI 生成并经用户审阅的研究计划 JSON；非结构化计划保存在 raw 字段';
 COMMENT ON COLUMN agent_sessions.todos IS '用户确认后的执行 todo 列表，JSONB 数组';
 COMMENT ON COLUMN agent_sessions.events IS '执行过程事件，AgentEvent 序列化后的 JSONB 数组';
+COMMENT ON COLUMN agent_sessions.summary IS '当前会话摘要，用于普通问答和深度研究的短期记忆注入';
+COMMENT ON COLUMN agent_sessions.token_count IS '当前会话估算 token 数';
+COMMENT ON COLUMN agent_sessions.last_compacted_tokens IS '上次成功摘要压缩时的估算 token 数';
+COMMENT ON COLUMN agent_sessions.compact_failures IS '连续会话摘要更新失败次数';
 COMMENT ON COLUMN agent_sessions.final_answer IS '最终研究报告正文副本';
 COMMENT ON COLUMN agent_sessions.report_filename IS 'output/research 下生成的 Markdown 报告文件名';
 COMMENT ON COLUMN agent_sessions.error IS '失败原因，仅 failed 状态使用';
@@ -61,6 +70,15 @@ COMMENT ON COLUMN agent_sessions.updated_at IS '会话最后更新时间';
 COMMENT ON COLUMN agent_sessions.approved_at IS '用户确认计划和 todo 的时间';
 COMMENT ON COLUMN agent_sessions.started_at IS '执行开始时间';
 COMMENT ON COLUMN agent_sessions.completed_at IS '执行结束时间';
+"""
+
+_ALTER_TABLE_SQL = """
+ALTER TABLE agent_sessions
+    ADD COLUMN IF NOT EXISTS summary TEXT,
+    ADD COLUMN IF NOT EXISTS summary_template TEXT,
+    ADD COLUMN IF NOT EXISTS token_count INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS last_compacted_tokens INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS compact_failures INTEGER NOT NULL DEFAULT 0;
 """
 
 
@@ -83,6 +101,7 @@ class AgentSessionStore:
             with self._get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(_CREATE_TABLE_SQL)
+                    cur.execute(_ALTER_TABLE_SQL)
             logger.info("agent_session_store.init_complete")
         except Exception as e:
             logger.error("agent_session_store.init_failed", error=str(e))
@@ -124,6 +143,25 @@ class AgentSessionStore:
             messages=messages or [],
             plan=plan,
             todos=todos,
+            created_at=now,
+            updated_at=now,
+        )
+        self._cache_session(session)
+        self._upsert_session(session)
+        return session
+
+    def create_general_session(
+        self,
+        topic: str,
+        messages: list[dict[str, Any]] | None = None,
+    ) -> AgentSession:
+        now = _utcnow()
+        session = AgentSession(
+            id=str(uuid.uuid4()),
+            session_type="general_query",
+            topic=topic,
+            status=SessionStatus.ACTIVE,
+            messages=messages or [],
             created_at=now,
             updated_at=now,
         )
@@ -206,6 +244,33 @@ class AgentSessionStore:
             self._cache_session(session)
         else:
             self._upsert_session(session)
+
+    def append_message(self, session_id: str, message: dict[str, Any]) -> None:
+        session = self._require_session(session_id)
+        session.messages.append(message)
+        session.updated_at = _utcnow()
+        if self._redis:
+            self._cache_session(session)
+        else:
+            self._upsert_session(session)
+
+    def update_summary(
+        self,
+        session_id: str,
+        summary: str,
+        token_count: int,
+        last_compacted_tokens: int,
+        compact_failures: int = 0,
+    ) -> AgentSession:
+        session = self._require_session(session_id)
+        session.summary = summary
+        session.token_count = token_count
+        session.last_compacted_tokens = last_compacted_tokens
+        session.compact_failures = compact_failures
+        session.updated_at = _utcnow()
+        self._cache_session(session)
+        self._upsert_session(session)
+        return session
 
     def update_todos(
         self,
@@ -305,10 +370,13 @@ class AgentSessionStore:
                     cur.execute(
                         """INSERT INTO agent_sessions
                            (id, session_type, topic, status, messages, plan, todos,
-                            events, final_answer, report_filename, error, created_at,
-                            updated_at, approved_at, started_at, completed_at)
+                            events, summary, summary_template, token_count,
+                            last_compacted_tokens, compact_failures, final_answer,
+                            report_filename, error, created_at, updated_at,
+                            approved_at, started_at, completed_at)
                            VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
-                                   %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s)
+                                   %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                   %s, %s, %s, %s)
                            ON CONFLICT (id) DO UPDATE SET
                                session_type = EXCLUDED.session_type,
                                topic = EXCLUDED.topic,
@@ -317,6 +385,11 @@ class AgentSessionStore:
                                plan = EXCLUDED.plan,
                                todos = EXCLUDED.todos,
                                events = EXCLUDED.events,
+                               summary = EXCLUDED.summary,
+                               summary_template = EXCLUDED.summary_template,
+                               token_count = EXCLUDED.token_count,
+                               last_compacted_tokens = EXCLUDED.last_compacted_tokens,
+                               compact_failures = EXCLUDED.compact_failures,
                                final_answer = EXCLUDED.final_answer,
                                report_filename = EXCLUDED.report_filename,
                                error = EXCLUDED.error,
@@ -333,6 +406,11 @@ class AgentSessionStore:
                             _json(_plan_to_json(session.plan)),
                             _json([todo.to_dict() for todo in session.todos]),
                             _json(session.events),
+                            session.summary,
+                            session.summary_template,
+                            session.token_count,
+                            session.last_compacted_tokens,
+                            session.compact_failures,
                             session.final_answer,
                             session.report_filename,
                             session.error,
@@ -378,6 +456,11 @@ class AgentSessionStore:
             plan=plan,
             todos=[ResearchTodo.from_dict(todo) for todo in todos],
             events=events,
+            summary=_row_get(row, "summary"),
+            summary_template=_row_get(row, "summary_template"),
+            token_count=int(_row_get(row, "token_count") or 0),
+            last_compacted_tokens=int(_row_get(row, "last_compacted_tokens") or 0),
+            compact_failures=int(_row_get(row, "compact_failures") or 0),
             final_answer=row["final_answer"],
             report_filename=row["report_filename"],
             error=row["error"],
@@ -401,3 +484,10 @@ def _plan_to_json(plan: dict[str, Any] | str | None) -> dict[str, Any] | None:
     if plan is None or isinstance(plan, dict):
         return plan
     return {"raw": plan}
+
+
+def _row_get(row: Any, key: str) -> Any:
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None

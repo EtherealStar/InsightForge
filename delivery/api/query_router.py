@@ -13,17 +13,25 @@ logger = structlog.get_logger(__name__)
 class QueryRequest(BaseModel):
     question: str
     top_k: int = 10
+    session_id: str | None = None
 
 
 def _get_query_service():
     """从 ConfigManager 获取组件并构建 QueryService"""
     from core.config_manager import get_config_manager
     from services.query_service import QueryService
+    from services.memory_service import MemoryService
 
     mgr = get_config_manager()
     return QueryService(
         mgr.article_store, mgr.vector_store,
         mgr.llm_client, mgr.embedding_client,
+        session_store=mgr.agent_session_store,
+        memory_service=MemoryService(
+            mgr.memory_store,
+            mgr.agent_session_store,
+            mgr.llm_client,
+        ),
     )
 
 
@@ -40,8 +48,20 @@ def query(req: QueryRequest):
             mode="non_stream",
             question_length=len(req.question),
         )
-        result = service.answer_agent(req.question, run_id=run_id)
-        return {"answer": result.answer, "events": [e.to_dict() for e in result.events]}
+        try:
+            result = service.answer_agent(
+                req.question,
+                run_id=run_id,
+                session_id=req.session_id,
+            )
+        except TypeError:
+            result = service.answer_agent(req.question, run_id=run_id)
+        session_id = getattr(result.events[0], "run_id", run_id) if result.events else run_id
+        return {
+            "answer": result.answer,
+            "session_id": session_id,
+            "events": [e.to_dict() for e in result.events],
+        }
     except Exception as e:
         logger.exception("agent.query_error", run_id=run_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"问答失败: {e}")
@@ -72,7 +92,15 @@ def query_stream(req: QueryRequest):
                 question_length=len(req.question),
             )
             try:
-                for event in service.answer_agent_stream(req.question, run_id=run_id):
+                try:
+                    event_iter = service.answer_agent_stream(
+                        req.question,
+                        run_id=run_id,
+                        session_id=req.session_id,
+                    )
+                except TypeError:
+                    event_iter = service.answer_agent_stream(req.question, run_id=run_id)
+                for event in event_iter:
                     event_data = json.dumps(
                         event.to_dict(), ensure_ascii=False
                     )

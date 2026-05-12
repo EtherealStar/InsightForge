@@ -38,7 +38,7 @@ class TestQueryService:
         expected = SimpleNamespace(answer="ok", events=[])
         fake_agent = MagicMock()
         fake_agent.run.return_value = expected
-        monkeypatch.setattr(service, "_build_agent", lambda: fake_agent)
+        monkeypatch.setattr(service, "_build_agent", lambda **kwargs: fake_agent)
 
         result = service.answer_agent("测试问题")
         assert result is expected
@@ -52,7 +52,7 @@ class TestQueryService:
         ]
         fake_agent = MagicMock()
         fake_agent.run_stream.return_value = iter(events)
-        monkeypatch.setattr(service, "_build_agent", lambda: fake_agent)
+        monkeypatch.setattr(service, "_build_agent", lambda **kwargs: fake_agent)
 
         chunks = list(service.answer_agent_stream("测试问题"))
         assert chunks == events

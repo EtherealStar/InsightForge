@@ -51,26 +51,26 @@
 **总流程**：抓取 → 存储 → 分析(可跳过) → 推送
 
 ### 抓取需求
-- 抓取网页新闻 (Crawlee) ✅ 已实现
-- 抓取 RSS 新闻 ✅ 已实现
-- 抓取 API 新闻 ✅ 已实现 (NewsAPI)
-- 搜索新闻 (AI 调用) ✅ 已实现 (Web Search)
+- 抓取网页新闻 (Crawlee)  已实现
+- 抓取 RSS 新闻  已实现
+- 抓取 API 新闻  已实现 (NewsAPI)
+- 搜索新闻 (AI 调用)  已实现 (Web Search)
 
 ### 存储需求
-- 存储抓取后的新闻 ✅ 已实现
-- 根据不同来源分类，有 HTML 的可以保存为 HTML ✅ 已实现
-- 向量化和 rerank ✅ 已实现
-- AI 打标签 ✅ 已实现 (SummaryService)
+- 存储抓取后的新闻  已实现
+- 根据不同来源分类，有 HTML 的可以保存为 HTML  已实现
+- 向量化和 rerank  已实现
+- AI 打标签  已实现 (SummaryService)
 - 记忆系统实现
 
 ### 分析需求
-- 调用 AI 分析 ✅ 已实现 (ReAct Agent)
+- 调用 AI 分析  已实现 (ReAct Agent)
 - 接入其他平台机器人 ⏳ 部分实现 (Webhook)
-- Deep Search 深度研究与报告 ✅ 已实现
+- Deep Search 深度研究与报告  已实现
 
 ### 推送需求
-- 全平台 webhook 推送 ✅ 已实现
-- ntfy ✅ 已实现
+- 全平台 webhook 推送  已实现
+- ntfy  已实现
 
 ### 安全需求
 - 远程访问登录界面，密钥

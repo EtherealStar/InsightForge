@@ -1,4 +1,4 @@
-import structlog
+﻿import structlog
 import time
 from datetime import datetime
 import redis
@@ -16,7 +16,7 @@ def get_redis_client():
     return redis.Redis.from_url(config.celery_broker_url, decode_responses=True)
 
 @shared_task(bind=True, max_retries=3)
-def run_pipeline_task(self):
+def run_pipeline_task(self, manual=False):
     """
     执行抓取 → 存储 → AI 摘要 → 向量化
     被 Beat 高频调用（每 5 分钟），内部通过 Redis 检查距离上次运行是否超过设定间隔。
@@ -31,9 +31,8 @@ def run_pipeline_task(self):
     last_run_str = r.get("logos:last_pipeline_run")
     
     # 简单的判定：如果是定时任务调用的（无参），我们检查间隔
-    is_manual = self.request.kwargs.get("manual", False)
     
-    if not is_manual and last_run_str:
+    if not manual and last_run_str:
         last_run = datetime.fromisoformat(last_run_str)
         elapsed_hours = (datetime.now() - last_run).total_seconds() / 3600.0
         if elapsed_hours < config.fetch_interval_hours:
@@ -77,7 +76,7 @@ def run_pipeline_task(self):
     return result
 
 @shared_task(bind=True, max_retries=3)
-def run_daily_brief_task(self):
+def run_daily_brief_task(self, manual=False):
     """
     执行日报生成并推送。
     同样被 Beat 高频调用，内部检查是否到达今天生成的时机或者满足间隔时间。
@@ -90,11 +89,10 @@ def run_daily_brief_task(self):
     last_run_str = r.get("logos:last_daily_brief_run")
     last_run = datetime.fromisoformat(last_run_str) if last_run_str else None
     
-    is_manual = self.request.kwargs.get("manual", False)
     now = datetime.now()
     should_run = False
     
-    if is_manual:
+    if manual:
         should_run = True
     else:
         if config.brief_mode == "interval":

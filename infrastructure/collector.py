@@ -33,9 +33,9 @@ class NewsCollector:
             try:
                 articles = self.fetch_source(name, url)
                 all_articles.extend(articles)
-                logger.info(f"✅ {name}: 抓取到 {len(articles)} 篇文章")
+                logger.info(f" {name}: 抓取到 {len(articles)} 篇文章")
             except Exception as e:
-                logger.error(f"❌ {name}: 抓取失败 — {e}")
+                logger.error(f" {name}: 抓取失败 — {e}")
         logger.info(f"总计抓取 {len(all_articles)} 篇文章")
         return all_articles
 

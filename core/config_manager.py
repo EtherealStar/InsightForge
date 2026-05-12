@@ -19,6 +19,7 @@ from core.config import AppConfig
 from core.factory import (
     create_article_store,
     create_agent_session_store,
+    create_memory_store,
     create_vector_store,
     create_llm_client,
     create_embedding_client,
@@ -63,6 +64,7 @@ class ConfigManager:
         # 缓存的组件实例
         self._article_store: Any = None
         self._agent_session_store: Any = None
+        self._memory_store: Any = None
         self._vector_store: Any = None
         self._llm_client: Any = None
         self._embedding_client: Any = None
@@ -86,6 +88,7 @@ class ConfigManager:
         with self._component_lock:
             self._article_store = create_article_store(self._config)
             self._agent_session_store = create_agent_session_store(self._config)
+            self._memory_store = create_memory_store(self._config)
             self._vector_store = create_vector_store(self._config)
             try:
                 self._llm_client = create_llm_client(self._config)
@@ -159,8 +162,10 @@ class ConfigManager:
             if changed_keys & store_fields:
                 self._article_store = create_article_store(self._config)
                 self._agent_session_store = create_agent_session_store(self._config)
+                self._memory_store = create_memory_store(self._config)
                 rebuilt.append("article_store")
                 rebuilt.append("agent_session_store")
+                rebuilt.append("memory_store")
 
             if changed_keys & vector_fields:
                 self._vector_store = create_vector_store(self._config)
@@ -239,6 +244,11 @@ class ConfigManager:
     def agent_session_store(self):
         """返回缓存的 AgentSessionStore 单例。"""
         return self._agent_session_store
+
+    @property
+    def memory_store(self):
+        """返回缓存的 MemoryStore 单例。"""
+        return self._memory_store
 
     @property
     def vector_store(self):

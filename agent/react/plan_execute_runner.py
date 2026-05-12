@@ -18,6 +18,7 @@ from agent.tools.registry import ToolRegistry
 from core.protocols import AgentSessionStoreProtocol, LLMClientProtocol
 from models.agent_session import AgentSession, ResearchTodo, SessionStatus
 from services.deep_research_service import DeepResearchService
+from services.memory_service import MemoryService
 
 
 class PlanExecuteRunner:
@@ -29,12 +30,14 @@ class PlanExecuteRunner:
         tool_registry: ToolRegistry,
         session_store: AgentSessionStoreProtocol,
         report_service: DeepResearchService,
+        memory_service: MemoryService | None = None,
         max_steps: int = 15,
     ):
         self._llm_client = llm_client
         self._tool_registry = tool_registry
         self._session_store = session_store
         self._report_service = report_service
+        self._memory_service = memory_service
         self._max_steps = max_steps
 
     def generate_plan(self, topic: str) -> AgentSession:
@@ -70,6 +73,13 @@ class PlanExecuteRunner:
             todos=_format_todos(todos),
             max_steps=self._max_steps,
         )
+        if self._memory_service:
+            memory_context = self._memory_service.build_memory_context(
+                session_id=session.id,
+                query=session.topic,
+            )
+            if memory_context:
+                system_prompt = f"{memory_context}\n\n{system_prompt}"
         agent = ReActAgent(
             llm_client=self._llm_client,
             tool_registry=self._tool_registry,
@@ -133,6 +143,8 @@ class PlanExecuteRunner:
                     final_answer=answer_content,
                     report_filename=os.path.basename(report_path),
                 )
+                if self._memory_service:
+                    self._memory_service.maybe_compact_session(session.id)
             else:
                 self._session_store.fail_session(session.id, "Agent 未生成最终回答")
         except Exception as e:

@@ -2,16 +2,16 @@
   <div class="brief-view">
     <div class="page-header">
       <div>
-        <h1>📋 新闻简报</h1>
+        <h1> 新闻简报</h1>
         <p class="subtitle">AI 生成的每日新闻简报</p>
       </div>
       <div class="header-actions">
         <button class="btn btn-secondary" @click="toggleSelectionMode" style="margin-right: 8px;">
-          {{ selectionMode ? '退出管理' : '📁 简报管理' }}
+          {{ selectionMode ? '退出管理' : ' 简报管理' }}
         </button>
         <button class="btn btn-primary" @click="generateBrief" :disabled="generating || selectionMode">
           <span v-if="generating" class="spinner"></span>
-          {{ generating ? '生成中...' : '✨ 立即生成' }}
+          {{ generating ? '生成中...' : ' 立即生成' }}
         </button>
       </div>
     </div>
@@ -24,16 +24,16 @@
         </div>
         <div class="batch-buttons">
           <button class="btn btn-sm" @click="selectAll" v-if="selectedFilenames.length < briefs.length">
-            ☑ 全选
+             全选
           </button>
           <button class="btn btn-sm" @click="selectedFilenames = []" v-if="selectedFilenames.length">
             清空
           </button>
           <button class="btn btn-sm btn-export" :disabled="!selectedFilenames.length" @click="batchExport">
-            📥 导出所选
+             导出所选
           </button>
           <button class="btn btn-sm btn-danger" :disabled="!selectedFilenames.length" @click="batchDelete">
-            🗑 删除所选
+             删除所选
           </button>
         </div>
       </div>
@@ -42,7 +42,7 @@
     <!-- 简报列表 -->
     <div class="brief-layout">
       <div class="brief-list card">
-        <h3>📂 历史简报</h3>
+        <h3> 历史简报</h3>
         <div v-if="loadingList" class="brief-loading">
           <div v-for="i in 5" :key="i" class="skeleton" style="height:40px;margin-bottom:8px"></div>
         </div>
@@ -60,15 +60,15 @@
             <!-- 多选模式下显示 checkbox -->
             <div class="brief-item-left">
               <span v-if="selectionMode" class="checkbox" :class="{ checked: selectedFilenames.includes(brief.filename) }">
-                <span class="check-icon">✓</span>
+                <span class="check-icon"></span>
               </span>
-              <span class="brief-date">📄 {{ brief.date }}</span>
+              <span class="brief-date"> {{ brief.date }}</span>
             </div>
             <span class="brief-meta">{{ formatFileSize(brief.size_bytes) }}</span>
           </div>
         </div>
         <div v-else class="empty-state" style="padding: var(--space-lg) 0">
-          <span class="emoji">📭</span>
+          <span class="emoji"></span>
           <p>暂无简报</p>
         </div>
       </div>
@@ -88,7 +88,7 @@
           <div class="markdown-body" v-html="renderedContent"></div>
         </div>
         <div v-else class="empty-state">
-          <span class="emoji">👈</span>
+          <span class="emoji"></span>
           <p>选择一份简报查看</p>
           <p>或点击「立即生成」创建新简报</p>
         </div>
@@ -168,7 +168,7 @@ async function generateBrief() {
   showToast('正在生成简报...', 'info')
   try {
     const res = await briefApi.generate()
-    showToast(`简报已生成！覆盖 ${res.data.article_count} 篇文章`, 'success')
+    const msg = res.data.message || `简报已生成！覆盖 ${res.data.article_count} 篇文章`; showToast(msg, 'success')
     // 刷新列表并加载新生成的
     await fetchBriefs()
     if (briefs.value.length) {

@@ -25,6 +25,7 @@ from delivery.api.newsapi_router import router as newsapi_router
 from delivery.api.webhook_router import router as webhook_router
 from delivery.api.research_router import router as research_router
 from delivery.api.tasks_router import router as tasks_router
+from delivery.api.memory_router import router as memory_router
 
 app = FastAPI(
     title="Logos — AI 新闻分析助手",
@@ -80,6 +81,7 @@ app.include_router(newsapi_router)
 app.include_router(webhook_router)
 app.include_router(research_router)
 app.include_router(tasks_router)
+app.include_router(memory_router)
 
 # 生产模式：挂载 Vue 构建产物
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -108,10 +110,10 @@ def startup_register_tools():
 
         mgr = get_config_manager()
         count = register_builtin_tools(mgr)
-        print(f"🔧 已注册 {count} 个内置 Agent 工具")
+        print(f" 已注册 {count} 个内置 Agent 工具")
     except Exception as e:
         # 工具注册失败不阻止服务启动
-        print(f"⚠  Agent 工具注册失败 (不影响基本功能): {e}")
+        print(f"  Agent 工具注册失败 (不影响基本功能): {e}")
 
 
 @app.get("/api/health")
@@ -134,17 +136,17 @@ def main():
         logger.handlers.clear()
         logger.propagate = True
 
-    print("\n📰 Logos — AI 新闻分析助手")
+    print("\n Logos — AI 新闻分析助手")
     print("=" * 40)
 
     # 检查是否有前端构建产物
     if os.path.exists(_STATIC_DIR):
-        print("✅ 检测到前端构建产物，生产模式启动")
-        print("🌐 访问: http://localhost:8005")
+        print(" 检测到前端构建产物，生产模式启动")
+        print(" 访问: http://localhost:8005")
     else:
-        print("⚠  未检测到前端构建产物")
+        print("  未检测到前端构建产物")
         print("   前端开发模式请运行: cd frontend && npm run dev")
-        print("🌐 API 文档: http://localhost:8005/docs")
+        print(" API 文档: http://localhost:8005/docs")
 
     print("=" * 40 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=8005, log_config=None)

@@ -150,9 +150,9 @@ class WebCrawler:
                 articles = self.crawl_site(name, url, link_selector)
                 self.max_pages = old_max
                 all_articles.extend(articles)
-                logger.info(f"✅ {name}: 爬取到 {len(articles)} 篇文章")
+                logger.info(f" {name}: 爬取到 {len(articles)} 篇文章")
             except Exception as e:
-                msg = f"❌ {name}: 爬取失败 — {e}"
+                msg = f" {name}: 爬取失败 — {e}"
                 logger.error(msg)
                 errors.append(msg)
         logger.info(f"[WebCrawler] 总计爬取 {len(all_articles)} 篇文章")

@@ -2,13 +2,13 @@
   <div class="webhook-view">
     <div class="page-header">
       <div>
-        <h1>🔔 消息推送</h1>
+        <h1> 消息推送</h1>
         <p class="subtitle">管理 Webhook 推送渠道，将新闻简报推送到各平台</p>
       </div>
       <div class="header-actions">
         <button class="btn" @click="pushAll" :disabled="pushing">
           <span v-if="pushing" class="spinner"></span>
-          {{ pushing ? '推送中...' : '📤 推送最新简报' }}
+          {{ pushing ? '推送中...' : ' 推送最新简报' }}
         </button>
         <button class="btn btn-primary" @click="openAddModal">
           + 添加渠道
@@ -20,7 +20,7 @@
     <section class="card auto-push-section">
       <div class="auto-push-row">
         <div class="auto-push-info">
-          <h3>⚡ 自动推送</h3>
+          <h3> 自动推送</h3>
           <p class="auto-push-desc">开启后，生成新闻简报时将自动推送到所有已启用的渠道</p>
         </div>
         <label class="toggle-switch">
@@ -86,13 +86,13 @@
             :disabled="testingId === ch.id"
             title="发送测试消息"
           >
-            {{ testingId === ch.id ? '发送中...' : '🧪 测试' }}
+            {{ testingId === ch.id ? '发送中...' : ' 测试' }}
           </button>
           <button class="btn btn-sm" @click="openEditModal(ch)" title="编辑">
-            ✏️ 编辑
+             编辑
           </button>
           <button class="btn btn-sm btn-danger" @click="deleteChannel(ch)" title="删除">
-            🗑️
+            
           </button>
         </div>
       </div>
@@ -100,7 +100,7 @@
 
     <!-- 空状态 -->
     <div v-else class="card empty-state">
-      <span class="emoji">📡</span>
+      <span class="emoji"></span>
       <p>暂无推送渠道</p>
       <p>点击「添加渠道」配置飞书、钉钉、企业微信、Telegram 或 ntfy</p>
       <button class="btn btn-primary" @click="openAddModal" style="margin-top: var(--space-md)">
@@ -114,7 +114,7 @@
         <div class="modal card">
           <div class="modal-header">
             <h2>{{ editingChannel ? '编辑渠道' : '添加推送渠道' }}</h2>
-            <button class="btn-icon" @click="closeModal">✕</button>
+            <button class="btn-icon" @click="closeModal"></button>
           </div>
 
           <!-- 平台选择 -->
@@ -133,7 +133,7 @@
 
           <!-- 配置帮助 -->
           <div class="platform-help" v-if="currentPlatformHelp">
-            <span class="help-icon">💡</span>
+            <span class="help-icon"></span>
             <span>{{ currentPlatformHelp }}</span>
           </div>
 
@@ -224,8 +224,8 @@ function showToast(message, type = 'info') {
 
 // ========== 平台信息 ==========
 function getPlatformIcon(id) {
-  const map = { feishu: '🪶', dingtalk: '💬', wecom: '💼', telegram: '✈️', ntfy: '🔔' }
-  return map[id] || '📡'
+  const map = { feishu: '', dingtalk: '', wecom: '', telegram: '', ntfy: '' }
+  return map[id] || ''
 }
 function getPlatformName(id) {
   const map = { feishu: '飞书', dingtalk: '钉钉', wecom: '企业微信', telegram: 'Telegram', ntfy: 'ntfy' }
@@ -264,11 +264,11 @@ async function fetchPlatforms() {
   } catch {
     // 使用本地备份
     platforms.value = [
-      { id: 'feishu', name: '飞书', icon: '🪶', help: '' },
-      { id: 'dingtalk', name: '钉钉', icon: '💬', help: '' },
-      { id: 'wecom', name: '企业微信', icon: '💼', help: '' },
-      { id: 'telegram', name: 'Telegram', icon: '✈️', help: '' },
-      { id: 'ntfy', name: 'ntfy', icon: '🔔', help: '' },
+      { id: 'feishu', name: '飞书', icon: '', help: '' },
+      { id: 'dingtalk', name: '钉钉', icon: '', help: '' },
+      { id: 'wecom', name: '企业微信', icon: '', help: '' },
+      { id: 'telegram', name: 'Telegram', icon: '', help: '' },
+      { id: 'ntfy', name: 'ntfy', icon: '', help: '' },
     ]
   }
 }
@@ -298,7 +298,7 @@ async function testChannel(ch) {
   testingId.value = ch.id
   try {
     await webhookApi.testChannel(ch.id)
-    showToast(`✅ 测试消息已发送到「${ch.name}」`, 'success')
+    showToast(` 测试消息已发送到「${ch.name}」`, 'success')
   } catch (e) {
     showToast('测试失败: ' + (e.response?.data?.detail || e.message), 'error')
   } finally {

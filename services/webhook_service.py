@@ -26,35 +26,35 @@ SUPPORTED_PLATFORMS = [
     {
         "id": "feishu",
         "name": "飞书",
-        "icon": "🪶",
+        "icon": "",
         "fields": ["webhook_url"],
         "help": "群设置 → 群机器人 → 添加自定义机器人 → 复制 Webhook 地址",
     },
     {
         "id": "dingtalk",
         "name": "钉钉",
-        "icon": "💬",
+        "icon": "",
         "fields": ["webhook_url"],
         "help": "群设置 → 智能群助手 → 添加机器人 → 自定义(Webhook) → 复制 Webhook 地址",
     },
     {
         "id": "wecom",
         "name": "企业微信",
-        "icon": "💼",
+        "icon": "",
         "fields": ["webhook_url"],
         "help": "群聊 → 添加群机器人 → 复制 Webhook 地址",
     },
     {
         "id": "telegram",
         "name": "Telegram",
-        "icon": "✈️",
+        "icon": "",
         "fields": ["bot_token", "chat_id"],
         "help": "通过 @BotFather 创建 Bot 获取 Token；向 Bot 发消息后通过 getUpdates 获取 Chat ID",
     },
     {
         "id": "ntfy",
         "name": "ntfy",
-        "icon": "🔔",
+        "icon": "",
         "fields": ["server_url", "topic"],
         "help": "无需注册，填写 ntfy 服务器地址和 topic 名称即可。默认服务器: https://ntfy.sh",
     },
@@ -168,7 +168,7 @@ class WebhookService:
         """截断过长的消息"""
         if len(text) <= max_len:
             return text
-        return text[: max_len - 50] + "\n\n--- ✂️ 内容过长，已截断 ---"
+        return text[: max_len - 50] + "\n\n---  内容过长，已截断 ---"
 
     def _send_feishu(self, channel: WebhookChannel, content: str) -> dict:
         """飞书群机器人"""
@@ -177,7 +177,7 @@ class WebhookService:
             "msg_type": "interactive",
             "card": {
                 "header": {
-                    "title": {"tag": "plain_text", "content": "📰 Logos 新闻简报"},
+                    "title": {"tag": "plain_text", "content": " Logos 新闻简报"},
                     "template": "blue",
                 },
                 "elements": [
@@ -198,7 +198,7 @@ class WebhookService:
         payload = {
             "msgtype": "markdown",
             "markdown": {
-                "title": "📰 Logos 新闻简报",
+                "title": " Logos 新闻简报",
                 "text": content,
             },
         }
@@ -241,7 +241,7 @@ class WebhookService:
             url,
             data=content.encode("utf-8"),
             headers={
-                "Title": "📰 Logos 新闻简报",
+                "Title": " Logos 新闻简报",
                 "Content-Type": "text/markdown; charset=utf-8",
             },
             timeout=15,
@@ -290,9 +290,9 @@ class WebhookService:
         if not channel:
             return {"status": "error", "error": "渠道不存在"}
         test_content = (
-            "# 🧪 Logos 推送测试\n\n"
+            "#  Logos 推送测试\n\n"
             "这是一条来自 **Logos 新闻助手** 的测试消息。\n\n"
-            "如果你能看到这条消息，说明推送渠道配置正确！ ✅\n\n"
+            "如果你能看到这条消息，说明推送渠道配置正确！ \n\n"
             f"- 渠道名称: {channel.name}\n"
             f"- 平台: {channel.platform}\n"
         )

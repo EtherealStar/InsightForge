@@ -2,7 +2,7 @@
   <div class="settings-view">
     <div class="page-header">
       <div>
-        <h1>⚙️ 功能设置</h1>
+        <h1> 功能设置</h1>
         <p class="subtitle">管理 RSS 来源、调度参数和数据</p>
       </div>
     </div>
@@ -10,7 +10,7 @@
     <div class="settings-grid">
       <!-- RSS 来源管理 -->
       <section class="card settings-section">
-        <h2>📡 RSS 来源管理</h2>
+        <h2> RSS 来源管理</h2>
         <p class="section-desc">配置新闻抓取的 RSS 来源</p>
 
         <div class="feed-form">
@@ -42,7 +42,7 @@
                 </td>
                 <td>
                   <button class="btn btn-danger btn-sm" @click="deleteFeed(feed)" title="删除">
-                    🗑️
+                    
                   </button>
                 </td>
               </tr>
@@ -56,7 +56,7 @@
 
       <!-- 网页爬取源管理 -->
       <section class="card settings-section">
-        <h2>🕷️ 网页爬取源管理</h2>
+        <h2> 网页爬取源管理</h2>
         <p class="section-desc">添加新闻网站地址，系统将通过爬虫自动抓取该站点的新闻</p>
 
         <div class="site-form">
@@ -104,7 +104,7 @@
                 <td style="text-align:center">{{ site.max_pages }}</td>
                 <td>
                   <button class="btn btn-danger btn-sm" @click="deleteSite(site)" title="删除">
-                    🗑️
+                    
                   </button>
                 </td>
               </tr>
@@ -154,14 +154,14 @@
             <input v-model.number="schedule.article_retention_days" type="number" class="input" min="7" max="365" />
           </div>
           <button class="btn btn-primary" @click="saveSchedule">
-            💾 保存调度设置
+             保存调度设置
           </button>
         </div>
       </section>
 
       <!-- 数据管理 -->
       <section class="card settings-section">
-        <h2>🗃️ 数据管理</h2>
+        <h2> 数据管理</h2>
         <p class="section-desc">数据库统计和维护操作</p>
 
         <div class="stats-grid" v-if="stats">
@@ -185,7 +185,7 @@
 
         <div class="data-actions">
           <button class="btn" @click="runPipeline" :disabled="pipelineRunning">
-            {{ pipelineRunning ? '执行中...' : '🔄 手动执行 Pipeline' }}
+            {{ pipelineRunning ? '执行中...' : ' 手动执行 Pipeline' }}
           </button>
         </div>
       </section>

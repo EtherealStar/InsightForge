@@ -42,7 +42,7 @@ start_dev.bat
 
 > 脚本会自动启动 Docker Compose 基础设施 + FastAPI 后端 + Celery Worker + Celery Beat + Flower 监控 + Vue 前端，共 6 个服务。
 
-浏览器访问 **http://localhost:5173** （前端支持热更新 HMR）
+浏览器访问 **http://:5173** （前端支持热更新 HMR）
 
 #### 方式 B：手动分布启动
 
@@ -90,13 +90,13 @@ python -m delivery.cli cleanup         # 手动清理旧文章
 
 | 页面 | 说明 |
 |---|---|
-| 📰 新闻展示 | 浏览抓取的新闻，按来源/语言筛选，点击查看全文 |
-| 📋 新闻简报 | 查看 AI 生成的新闻简报，支持一键生成 |
-| 💬 智能问答 | ReAct Agent 流式问答，推理过程可视化 |
-| 🔍 在线搜索 | NewsAPI 全球新闻搜索 + 热门头条 |
-| 📤 Webhook | 推送渠道管理、测试、自动推送 |
-| ⚙️ 功能设置 | RSS/爬虫源管理、调度参数配置 |
-| 🔧 API 配置 | LLM/Embedding/Rerank/搜索引擎配置 |
+|  新闻展示 | 浏览抓取的新闻，按来源/语言筛选，点击查看全文 |
+|  新闻简报 | 查看 AI 生成的新闻简报，支持一键生成 |
+|  智能问答 | ReAct Agent 流式问答，推理过程可视化 |
+|  在线搜索 | NewsAPI 全球新闻搜索 + 热门头条 |
+|  Webhook | 推送渠道管理、测试、自动推送 |
+|  功能设置 | RSS/爬虫源管理、调度参数配置 |
+|  API 配置 | LLM/Embedding/Rerank/搜索引擎配置 |
 
 ## 项目结构
 

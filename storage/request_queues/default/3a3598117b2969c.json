@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://www.bbc.com/sport/football/articles/cvgz8ppd497o",
+  "url": "https://www.bbc.com/sport/football/articles/cvgz8ppd497o",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

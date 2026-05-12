@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://www.bbc.com/future/article/20260506-heart-rate-variability-can-say-a-lot-about-your-health-and-heres-how-to-track-it",
+  "url": "https://www.bbc.com/future/article/20260506-heart-rate-variability-can-say-a-lot-about-your-health-and-heres-how-to-track-it",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 1
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

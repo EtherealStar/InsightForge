@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://www.bbc.com/iplayer/episode/m002kk0d?at_audience_id=ss&at_bbc_team=bbc&at_brand=m002csng&at_campaign=the_celebrity_traitors&at_campaign_type=owned&at_format=image&at_link_title=the_celebrity_traitors&at_medium=display_ad&at_mid=dxgkndjnpb&at_nation=net&at_objective=consumption&at_product=iplayer&at_ptr_name=bbc&at_ptr_type=media",
+  "url": "https://www.bbc.com/iplayer/episode/m002kk0d?at_mid=dxgKndjNpb&at_campaign=The_Celebrity_Traitors&at_medium=display_ad&at_campaign_type=owned&at_nation=NET&at_audience_id=SS&at_product=iplayer&at_brand=m002csng&at_ptr_name=bbc&at_ptr_type=media&at_format=image&at_objective=consumption&at_link_title=The_Celebrity_Traitors&at_bbc_team=BBC",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

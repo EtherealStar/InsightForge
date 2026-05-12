@@ -1,13 +1,13 @@
-<template>
+﻿<template>
   <div class="query-view">
     <div class="page-header">
       <div>
-        <h1>🧠 智能助手</h1>
+        <h1> 智能助手</h1>
         <p class="subtitle">自动识别意图 — 快速问答 · 深度研究</p>
       </div>
       <div class="header-actions">
         <button class="btn btn-sm" @click="showReports = !showReports">
-          {{ showReports ? '💬 返回对话' : '📂 研究报告' }}
+          {{ showReports ? ' 返回对话' : ' 研究报告' }}
         </button>
       </div>
     </div>
@@ -15,10 +15,10 @@
     <!-- 研究报告列表 -->
     <div v-if="showReports" class="reports-panel card">
       <div class="reports-header">
-        <h2>📂 研究报告历史</h2>
+        <h2> 研究报告历史</h2>
         <button v-if="reports.length" class="btn btn-sm btn-danger" @click="batchDeleteReports"
           :disabled="!selectedReports.length">
-          🗑️ 删除选中 ({{ selectedReports.length }})
+           删除选中 ({{ selectedReports.length }})
         </button>
       </div>
       <div v-if="reports.length" class="reports-list">
@@ -29,7 +29,7 @@
             <span class="report-name">{{ r.filename }}</span>
             <span class="report-meta">{{ new Date(r.generated_at).toLocaleString() }} · {{ (r.size_bytes / 1024).toFixed(1) }}KB</span>
           </div>
-          <button class="btn btn-sm" @click="pushReport(r.filename)" title="推送">📤</button>
+          <button class="btn btn-sm" @click="pushReport(r.filename)" title="推送"></button>
         </div>
       </div>
       <div v-else class="empty-state"><p>暂无研究报告</p></div>
@@ -38,7 +38,7 @@
       <div v-if="viewingReport" class="report-detail card">
         <div class="report-detail-header">
           <h3>{{ viewingReport.filename }}</h3>
-          <button class="btn btn-sm" @click="viewingReport = null">✕ 关闭</button>
+          <button class="btn btn-sm" @click="viewingReport = null"> 关闭</button>
         </div>
         <div class="markdown-body" v-html="renderMarkdown(viewingReport.content)"></div>
       </div>
@@ -48,16 +48,16 @@
     <div v-else class="chat-container card">
       <div class="chat-messages" ref="messagesRef">
         <div v-if="!messages.length" class="chat-welcome">
-          <div class="welcome-icon">🧠</div>
+          <div class="welcome-icon"></div>
           <h2>你好，我是 Logos 智能助手</h2>
           <p>我能自动识别你的需求：快速问答或深度研究</p>
           <div class="mode-hints">
             <div class="mode-hint">
-              <span class="mode-badge quick">⚡ 快速问答</span>
+              <span class="mode-badge quick"> 快速问答</span>
               <span>查询新闻、统计数据、新闻库管理</span>
             </div>
             <div class="mode-hint">
-              <span class="mode-badge deep">🔬 深度研究</span>
+              <span class="mode-badge deep"> 深度研究</span>
               <span>说「深度研究/分析/调查/写报告」触发</span>
             </div>
           </div>
@@ -67,12 +67,12 @@
         </div>
 
         <div v-for="(msg, i) in messages" :key="i" :class="['chat-message', msg.role]">
-          <div class="message-avatar">{{ msg.role === 'user' ? '👤' : '🧠' }}</div>
+          <div class="message-avatar">{{ msg.role === 'user' ? '' : '' }}</div>
           <div class="message-content">
             <div v-if="msg.reasoning && msg.reasoning.length" class="reasoning-block">
               <div class="reasoning-header" @click="msg.reasoningOpen = !msg.reasoningOpen">
                 <span class="reasoning-toggle">{{ msg.reasoningOpen ? '▼' : '▶' }}</span>
-                <span class="reasoning-icon">🔍</span>
+                <span class="reasoning-icon"></span>
                 <span>推理过程（{{ msg.reasoning.length }} 步）</span>
               </div>
               <div v-if="msg.reasoningOpen" class="reasoning-steps">
@@ -116,11 +116,11 @@
 
         <!-- 流式加载中 -->
         <div v-if="streaming" class="chat-message assistant">
-          <div class="message-avatar">🧠</div>
+          <div class="message-avatar"></div>
           <div class="message-content">
             <div v-if="streamReasoning.length" class="reasoning-block live">
               <div class="reasoning-header">
-                <span class="reasoning-icon pulse">🔍</span>
+                <span class="reasoning-icon pulse"></span>
                 <span>{{ isDeepResearch ? '深度研究中...' : '正在推理...' }}</span>
               </div>
               <div class="reasoning-steps">
@@ -187,7 +187,7 @@ const isDeepResearch = computed(() => {
 })
 
 const inputPlaceholder = computed(() => {
-  if (isDeepResearch.value) return '🔬 将进入深度研究模式...'
+  if (isDeepResearch.value) return ' 将进入深度研究模式...'
   return '输入问题（快速问答）或包含「深度研究」触发研究模式'
 })
 
@@ -205,12 +205,12 @@ function renderMarkdown(text) {
 
 function stepIcon(type) {
   return {
-    thought: '💭',
-    action: '🔧',
-    action_start: '🔧',
-    observation: '📋',
-    action_result: '📋',
-    error: '❌',
+    thought: '',
+    action: '',
+    action_start: '',
+    observation: '',
+    action_result: '',
+    error: '',
   }[type] || '•'
 }
 
@@ -335,7 +335,7 @@ async function askQuestion(question) {
               streamAnswer.value = event.content
               streamRawOutput.value = ''
             } else if (event.event_type === 'error') {
-              streamAnswer.value += '\n\n❌ ' + event.content
+              streamAnswer.value += '\n\n ' + event.content
             } else {
               reasoning.push(event)
               streamReasoning.value = [...reasoning]
@@ -356,7 +356,7 @@ async function askQuestion(question) {
   } catch (e) {
     messages.value.push({
       role: 'assistant',
-      content: `❌ 请求失败: ${e.message}\n\n请检查后端服务是否正常运行。`,
+      content: ` 请求失败: ${e.message}\n\n请检查后端服务是否正常运行。`,
       reasoning: null, reasoningOpen: false,
     })
   } finally {
@@ -418,7 +418,7 @@ async function confirmAndExecutePlan() {
             } else if (event.event_type === 'todo_update') {
               editableTodos.value = normalizeTodos(event.metadata?.todos || editableTodos.value)
             } else if (event.event_type === 'error') {
-              streamAnswer.value += '\n\n❌ ' + event.content
+              streamAnswer.value += '\n\n ' + event.content
             } else {
               reasoning.push(event)
               streamReasoning.value = [...reasoning]
@@ -440,7 +440,7 @@ async function confirmAndExecutePlan() {
   } catch (e) {
     messages.value.push({
       role: 'assistant',
-      content: `❌ 研究执行失败: ${e.message}`,
+      content: ` 研究执行失败: ${e.message}`,
       reasoning: null,
       reasoningOpen: false,
     })

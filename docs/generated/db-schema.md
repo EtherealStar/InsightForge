@@ -62,18 +62,20 @@ AgentSession (1) ──→ (1) Plan Execute 深度研究会话
 
 ---
 
-## AgentSession Plan Execute 会话
+## AgentSession 通用 Agent 会话
 
-`agent_sessions` 保存 Plan Execute 深度研究的完整会话状态：用户主题、AI 生成的 PLAN、用户确认后的 todo list、执行事件、最终报告正文和报告文件名。
+`agent_sessions` 同时保存普通问答和 Plan Execute 深度研究会话。普通问答使用 `session_type=general_query` 和 `active` 状态；深度研究继续保存用户主题、AI 生成的 PLAN、用户确认后的 todo list、执行事件、最终报告正文和报告文件名。
 
 ### 状态流转
 
 ```
+active ────────────→ completed/failed/cancelled
 planned → approved → running → completed
                      └──────→ failed
 planned ────────────→ cancelled
 ```
 
+- `active`：普通问答会话进行中，可持续追加消息、事件和会话摘要
 - `planned`：AI 已生成研究计划，等待用户审阅或编辑 todo
 - `approved`：用户已确认计划和 todo，准备执行
 - `running`：ReAct Agent 正在按确认后的计划执行
@@ -85,7 +87,7 @@ planned ────────────→ cancelled
 
 - 执行期 Redis 缓存键为 `logos:agent_session:{session_id}`，保存完整会话 JSON。
 - 计划生成、用户保存计划、状态切换会立即 upsert PostgreSQL。
-- 执行中 `events` 和 `todos` 优先更新 Redis；Redis 不可用时直接写 PostgreSQL。
+- 执行中 `events`、`messages`、`todos` 优先更新 Redis；Redis 不可用时直接写 PostgreSQL。
 - `completed/failed/cancelled` 终态会将 Redis 中的完整会话 flush 到 PostgreSQL。
 
 ### JSONB 字段语义
@@ -94,6 +96,36 @@ planned ────────────→ cancelled
 - `plan`：结构化研究计划；如果模型返回非 JSON，则保存为 `{"raw": "..."}`。
 - `todos`：用户最终确认的执行列表，元素包含 `id/title/status`。
 - `events`：`AgentEvent.to_dict()` 序列化结果，包含 `thought/action_start/action_result/todo_update/answer/error` 等事件。
+- `summary`：会话记忆摘要，普通问答和深度研究都会注入 Agent prompt。
+- `token_count`：当前会话估算 token 数。
+- `last_compacted_tokens`：上次成功摘要压缩时的估算 token 数。
+- `compact_failures`：连续摘要更新失败次数，达到 3 次后更新间隔从 5k token 退避到 10k token。
+
+## 三层记忆系统
+
+### core_memory_revisions
+
+核心记忆版本表，保存 Agent 工作规则、工具说明、摘要模板和全量压缩模板等内容。核心记忆不物理删除；更新时创建新 revision，并将同 `kind` 的旧 revision 标记为 inactive。
+
+### persistent_memories
+
+持久记忆表，保存跨会话记忆。
+
+| 字段 | 业务语义 |
+|---|---|
+| `memory_type` | `user` / `feedback` / `project` |
+| `status` | `pending` / `active` / `archived` / `deleted` |
+| `summary` | MEMORY 索引使用的 50 token 内摘要 |
+| `content` | 具体记忆正文 |
+| `source_session_id` | 记忆候选来源 session |
+
+MEMORY 索引以数据库为准，由 `persistent_memories` 中 `status=active` 的记录生成：
+
+```text
+- [feedback-concise] - 回复保持简洁
+```
+
+持久记忆采用“建议写入，用户确认”：自动提取只能写入 `pending`，用户确认后才更新为 `active` 并进入 MEMORY 索引。
 
 ### 报告兼容关系
 

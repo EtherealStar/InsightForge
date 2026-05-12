@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from 'axios'
+﻿import axios, { AxiosInstance } from 'axios'
 
 const api: AxiosInstance = axios.create({
   baseURL: '/api',
@@ -93,14 +93,6 @@ export const researchApi = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
-    })
-  },
-  startStream: (topic: string) => {
-    // SSE 流式深度研究
-    return fetch('/api/research/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic }),
     })
   },
   list: () => api.get('/research'),

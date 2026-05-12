@@ -3,6 +3,7 @@ from core.config import AppConfig
 from core.protocols import (
     ArticleStoreProtocol,
     AgentSessionStoreProtocol,
+    MemoryStoreProtocol,
     VectorStoreProtocol,
     LLMClientProtocol,
     EmbeddingClientProtocol,
@@ -22,6 +23,12 @@ def create_agent_session_store(config: AppConfig) -> AgentSessionStoreProtocol:
         dsn=config.pg_dsn,
         redis_url=config.celery_broker_url,
     )
+
+
+def create_memory_store(config: AppConfig) -> MemoryStoreProtocol:
+    from infrastructure.memory_store import MemoryStore
+
+    return MemoryStore(dsn=config.pg_dsn)
 
 
 def create_vector_store(config: AppConfig) -> VectorStoreProtocol:

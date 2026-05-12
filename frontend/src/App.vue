@@ -2,7 +2,7 @@
   <div class="app-layout">
     <header class="mobile-topbar">
       <button class="btn-icon mobile-menu-btn" @click="mobileNavOpen = true" aria-label="打开菜单">
-        ☰
+        
       </button>
       <span class="mobile-title">Logos</span>
     </header>

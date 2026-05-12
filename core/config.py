@@ -99,7 +99,7 @@ class AppConfig(BaseSettings):
             import structlog
 
             logging.warning(
-                f"⚠ {info.field_name} 为空 — 相关功能将被禁用"
+                f" {info.field_name} 为空 — 相关功能将被禁用"
             )
         return v
 
