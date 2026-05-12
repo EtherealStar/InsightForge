@@ -1,56 +1,11 @@
-# 数据库 Schema 文档
+# 数据库业务规则补充说明
 
-> **来源**：从 [ARCHITECTURE.md](../../ARCHITECTURE.md) §12 迁出的完整数据库 Schema。
-> **生成方式**：手动维护，与代码实现同步更新。
+> **表结构文档**由 [tbls](https://github.com/k1LoW/tbls) 自动生成 → [dbdoc/](dbdoc/)
+> 本文件仅保留 tbls 无法覆盖的业务规则说明。
 
 ---
 
-## PostgreSQL articles 表
-
-```sql
-CREATE TABLE IF NOT EXISTS articles (
-    id           SERIAL PRIMARY KEY,
-    url_hash     TEXT UNIQUE NOT NULL,
-    title        TEXT NOT NULL,
-    url          TEXT NOT NULL,
-    content      TEXT,
-    html_content TEXT,
-    summary      TEXT,
-    source       TEXT,
-    author       TEXT DEFAULT '',
-    language     TEXT,
-    published_at TIMESTAMP,
-    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    status       TEXT DEFAULT 'stored',
-    tags         JSONB DEFAULT '[]'::jsonb
-);
-
--- 索引
-CREATE INDEX IF NOT EXISTS idx_status ON articles(status);
-CREATE INDEX IF NOT EXISTS idx_created_at ON articles(created_at);
-CREATE INDEX IF NOT EXISTS idx_source ON articles(source);
-```
-
-### 字段说明
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` | SERIAL | 自增主键 |
-| `url_hash` | TEXT UNIQUE | SHA256(url)，用于去重 |
-| `title` | TEXT | 文章标题 |
-| `url` | TEXT | 原始 URL |
-| `content` | TEXT | Markdown 格式正文 |
-| `html_content` | TEXT | 原始 HTML（抓取阶段使用，后续清空） |
-| `summary` | TEXT | AI 生成的摘要 |
-| `source` | TEXT | 新闻来源名称 |
-| `author` | TEXT | 作者 |
-| `language` | TEXT | 语言 (`en` / `zh` / `unknown`) |
-| `published_at` | TIMESTAMP | 发布时间 |
-| `created_at` | TIMESTAMP | 入库时间 |
-| `status` | TEXT | 生命周期状态 |
-| `tags` | JSONB | AI 生成的标签数组 |
-
-### ArticleStatus 生命周期
+## ArticleStatus 生命周期
 
 ```
 stored → pending_summary → summarized → embedded
@@ -63,87 +18,15 @@ stored → pending_summary → summarized → embedded
 
 ---
 
-## PostgreSQL parent_chunks 表
+## 核心实体关系
 
-```sql
-CREATE TABLE IF NOT EXISTS parent_chunks (
-    parent_chunk_id TEXT PRIMARY KEY,
-    article_id      INTEGER NOT NULL,
-    content         TEXT NOT NULL,
-    token_count     INTEGER NOT NULL DEFAULT 0,
-    child_chunk_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-    doc_name        TEXT NOT NULL DEFAULT '',
-    source          TEXT DEFAULT '',
-    url             TEXT DEFAULT '',
-    search_vector   tsvector,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_parent_chunks_article_id ON parent_chunks(article_id);
-CREATE INDEX IF NOT EXISTS idx_parent_chunks_fts ON parent_chunks USING GIN(search_vector);
+```
+Article (1) ──→ (N) ParentChunk (父分块, PostgreSQL)
+Article (1) ──→ (N) Chunk (子分块, PostgreSQL/pgvector)
+Chunk (N)   ──→ (1) ParentChunk (通过 parent_chunk_id)
 ```
 
-### 字段说明
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `parent_chunk_id` | TEXT PK | 格式: `"{article_id}_p{index}"` |
-| `article_id` | INTEGER | 所属文章 ID |
-| `content` | TEXT | 父 chunk 完整文本 (~1024 token) |
-| `token_count` | INTEGER | tiktoken 计算的 token 数 |
-| `child_chunk_ids` | JSONB | 包含的子 chunk ID 数组 |
-| `doc_name` | TEXT | 文档名 |
-| `source` | TEXT | 新闻来源 |
-| `url` | TEXT | 文章 URL |
-| `search_vector` | tsvector | jieba 分词后的全文索引向量 |
-| `created_at` | TIMESTAMP | 创建时间 |
-
----
-
-## PostgreSQL child_chunks 表 (pgvector)
-
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE IF NOT EXISTS child_chunks (
-    chunk_id        TEXT PRIMARY KEY,
-    article_id      INTEGER NOT NULL,
-    parent_chunk_id TEXT NOT NULL,
-    content         TEXT NOT NULL,
-    token_count     INTEGER NOT NULL DEFAULT 0,
-    doc_name        TEXT NOT NULL DEFAULT '',
-    heading_path    JSONB NOT NULL DEFAULT '[]'::jsonb,
-    chunk_index     INTEGER NOT NULL DEFAULT 0,
-    source          TEXT DEFAULT '',
-    url             TEXT DEFAULT '',
-    embedding       vector(1536) NOT NULL,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_child_chunks_article_id
-    ON child_chunks(article_id);
-CREATE INDEX IF NOT EXISTS idx_child_chunks_parent_chunk_id
-    ON child_chunks(parent_chunk_id);
-CREATE INDEX IF NOT EXISTS idx_child_chunks_embedding_hnsw
-    ON child_chunks USING hnsw (embedding vector_cosine_ops);
-```
-
-> `embedding` 维度由 `EMBEDDING_VECTOR_SIZE` 配置控制，默认 `1536`。
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `chunk_id` | TEXT PK | 子 chunk 唯一 ID，格式: `"{article_id}_c{index}"` |
-| `article_id` | INTEGER | 所属文章 ID |
-| `parent_chunk_id` | TEXT | 所属父 chunk ID，格式: `"{article_id}_p{index}"` |
-| `content` | TEXT | 子 chunk 原文 |
-| `token_count` | INTEGER | tiktoken 计算的 token 数 |
-| `doc_name` | TEXT | 文档名 |
-| `heading_path` | JSONB | 标题层级路径 |
-| `chunk_index` | INTEGER | 在文章内的序号 |
-| `source` | TEXT | 新闻来源 |
-| `url` | TEXT | 文章 URL |
-| `embedding` | vector(n) | 子 chunk embedding 向量 |
-| `created_at` | TIMESTAMP | 创建时间 |
+外键约束已配置 `ON DELETE CASCADE`：删除文章时自动级联删除关联的父子 chunks。
 
 ---
 

@@ -160,6 +160,8 @@ class TestSingleToolCall:
         assert result.success is True
         assert "1234" in result.answer
         assert "get_stats_test" in result.tools_called
+        assert any(e.event_type == "action_start" for e in result.events)
+        assert any(e.event_type == "action_result" for e in result.events)
 
     def test_tool_receives_params(self, registry_with_tools):
         llm = MockLLMClient([
@@ -237,9 +239,37 @@ class TestStreamOutput:
 
         event_types = [e.event_type for e in events]
         assert "thought" in event_types
-        assert "action" in event_types
-        assert "observation" in event_types
+        assert "llm_delta" in event_types
+        assert "action_start" in event_types
+        assert "action_result" in event_types
+        assert "answer_delta" in event_types
         assert "answer" in event_types
+
+    def test_stream_multiline_action_input(self, registry_with_tools):
+        llm = MockLLMClient([
+            'Thought: 需要 echo\nAction: echo_test\nAction Input: {\n  "message": "hello multiline"\n}',
+            'Answer: 收到 Echo: hello multiline',
+        ])
+        agent = ReActAgent(llm, registry_with_tools, max_steps=5)
+
+        events = list(agent.run_stream("测试多行 JSON"))
+
+        action = next(e for e in events if e.event_type == "action_start")
+        assert action.tool_input == {"message": "hello multiline"}
+        assert any(e.event_type == "action_result" for e in events)
+
+    def test_stream_multiline_answer_delta(self, registry_with_tools):
+        llm = MockLLMClient([
+            "Answer: 第一行\n第二行",
+        ])
+        agent = ReActAgent(llm, registry_with_tools, max_steps=3)
+
+        events = list(agent.run_stream("多行回答"))
+
+        assert any(e.event_type == "answer_delta" for e in events)
+        final_answer = next(e.content for e in events if e.event_type == "answer")
+        assert "第一行" in final_answer
+        assert "第二行" in final_answer
 
     def test_stream_error_handling(self, registry_with_tools):
         """LLM 调用失败时产出 error 事件。"""
@@ -264,10 +294,17 @@ class TestAgentEvent:
     """测试事件序列化。"""
 
     def test_to_dict_basic(self):
-        event = AgentEvent(event_type="thought", content="思考中...")
+        event = AgentEvent(
+            event_type="thought",
+            content="思考中...",
+            run_id="run-1",
+            sequence=1,
+        )
         d = event.to_dict()
         assert d["event_type"] == "thought"
         assert d["content"] == "思考中..."
+        assert d["run_id"] == "run-1"
+        assert d["sequence"] == 1
         assert "tool_name" not in d
 
     def test_to_dict_with_tool(self):

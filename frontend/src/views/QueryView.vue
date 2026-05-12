@@ -80,7 +80,7 @@
                   <div class="step-icon">{{ stepIcon(step.event_type) }}</div>
                   <div class="step-content">
                     <div class="step-label">{{ stepLabel(step.event_type) }}</div>
-                    <div class="step-text" v-if="step.event_type === 'action'">
+                    <div class="step-text" v-if="isToolEvent(step.event_type)">
                       <code>{{ step.tool_name }}({{ formatToolInput(step.tool_input) }})</code>
                     </div>
                     <div class="step-text" v-else>{{ step.content }}</div>
@@ -107,13 +107,17 @@
                   <div class="step-icon">{{ stepIcon(step.event_type) }}</div>
                   <div class="step-content">
                     <div class="step-label">{{ stepLabel(step.event_type) }}</div>
-                    <div class="step-text" v-if="step.event_type === 'action'">
+                    <div class="step-text" v-if="isToolEvent(step.event_type)">
                       <code>{{ step.tool_name }}({{ formatToolInput(step.tool_input) }})</code>
                     </div>
                     <div class="step-text" v-else>{{ step.content }}</div>
                   </div>
                 </div>
               </div>
+            </div>
+            <div v-if="streamRawOutput && !streamAnswer" class="live-output">
+              <div class="live-output-label">当前 AI 输出</div>
+              <pre>{{ streamRawOutput }}</pre>
             </div>
             <div v-if="streamAnswer" class="markdown-body" v-html="renderMarkdown(streamAnswer)"></div>
             <span v-if="!streamAnswer" class="typing-cursor">▊</span>
@@ -143,6 +147,7 @@ const messages = ref([])
 const input = ref('')
 const streaming = ref(false)
 const streamAnswer = ref('')
+const streamRawOutput = ref('')
 const streamReasoning = ref([])
 const messagesRef = ref(null)
 const showReports = ref(false)
@@ -175,11 +180,29 @@ function renderMarkdown(text) {
 }
 
 function stepIcon(type) {
-  return { thought: '💭', action: '🔧', observation: '📋', error: '❌' }[type] || '•'
+  return {
+    thought: '💭',
+    action: '🔧',
+    action_start: '🔧',
+    observation: '📋',
+    action_result: '📋',
+    error: '❌',
+  }[type] || '•'
 }
 
 function stepLabel(type) {
-  return { thought: '思考', action: '调用工具', observation: '观察结果', error: '错误' }[type] || type
+  return {
+    thought: '思考',
+    action: '调用工具',
+    action_start: '调用工具',
+    observation: '工具结果',
+    action_result: '工具结果',
+    error: '错误',
+  }[type] || type
+}
+
+function isToolEvent(type) {
+  return type === 'action' || type === 'action_start'
 }
 
 function formatToolInput(inp) {
@@ -201,6 +224,7 @@ async function askQuestion(question) {
 
   streaming.value = true
   streamAnswer.value = ''
+  streamRawOutput.value = ''
   streamReasoning.value = []
   const reasoning = []
 
@@ -229,8 +253,13 @@ async function askQuestion(question) {
           if (data === '[DONE]') break
           try {
             const event = JSON.parse(data)
-            if (event.event_type === 'answer') {
+            if (event.event_type === 'llm_delta') {
+              streamRawOutput.value += event.content || ''
+            } else if (event.event_type === 'answer_delta') {
+              streamAnswer.value += event.content || ''
+            } else if (event.event_type === 'answer') {
               streamAnswer.value = event.content
+              streamRawOutput.value = ''
             } else if (event.event_type === 'error') {
               streamAnswer.value += '\n\n❌ ' + event.content
             } else {
@@ -261,6 +290,7 @@ async function askQuestion(question) {
   } finally {
     streaming.value = false
     streamAnswer.value = ''
+    streamRawOutput.value = ''
     streamReasoning.value = []
     scrollToBottom()
   }
@@ -444,17 +474,43 @@ onMounted(fetchReports)
 .step-content { flex: 1; min-width: 0; }
 .step-label { font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
 .reasoning-step.thought .step-label { color: #8b5cf6; }
-.reasoning-step.action .step-label { color: #f59e0b; }
-.reasoning-step.observation .step-label { color: #10b981; }
+.reasoning-step.action .step-label,
+.reasoning-step.action_start .step-label { color: #f59e0b; }
+.reasoning-step.observation .step-label,
+.reasoning-step.action_result .step-label { color: #10b981; }
 .reasoning-step.error .step-label { color: #ef4444; }
 .step-text { color: var(--text-secondary); word-break: break-word; }
 .step-text code {
   background: rgba(99, 102, 241, 0.1); padding: 2px 6px; border-radius: 3px;
   font-size: 0.8rem; font-family: 'Fira Code', 'Consolas', monospace; color: var(--text-primary);
 }
-.reasoning-step.observation .step-text {
+.reasoning-step.observation .step-text,
+.reasoning-step.action_result .step-text {
   max-height: 120px; overflow-y: auto; font-size: 0.8rem; white-space: pre-wrap;
   background: var(--bg-secondary); padding: 6px 8px; border-radius: var(--radius-sm); margin-top: 2px;
+}
+
+.live-output {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+.live-output-label {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.live-output pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.825rem;
+  line-height: 1.5;
 }
 
 .typing-cursor { display: inline-block; color: var(--accent-primary); animation: blink 1s infinite; }

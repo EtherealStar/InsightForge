@@ -284,7 +284,8 @@ Chunk (N)   ──→ (1) ParentChunk (通过 parent_chunk_id)
 | `ParentChunk` | PostgreSQL `parent_chunks` | LLM 召回上下文 + 全文索引 |
 | `Chunk` | PostgreSQL `child_chunks` | 向量检索单元 |
 
-→ 完整 Schema 与 DDL：[docs/generated/db-schema.md](docs/generated/db-schema.md)
+→ 完整 Schema 与 DDL：[docs/generated/dbdoc/](docs/generated/dbdoc/) (tbls 自动生成)
+→ 业务规则补充：[docs/generated/db-schema.md](docs/generated/db-schema.md)
 
 ---
 

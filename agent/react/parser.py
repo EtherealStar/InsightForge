@@ -7,7 +7,7 @@
 import json
 import re
 import structlog
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, Any
 
 logger = structlog.get_logger(__name__)
@@ -147,101 +147,51 @@ class ReActParser:
 
 
 class StreamingReActParser:
-    """流式 ReAct 解析器 — 逐 token 解析。
+    """流式 ReAct 解析器。
 
-    维护内部状态机，在接收到完整的一行时判断步骤类型。
+    它保留完整缓冲区，支持跨 token 的多行 Thought、Action Input
+    和 Answer。调用方可以在 token 到达时读取 answer_delta，
+    在一次 LLM 流结束时通过 flush() 获得完整结构化步骤。
     """
 
     def __init__(self):
         self._buffer = ""
-        self._current_step_type: StepType | None = None
-        self._current_content = ""
-        self._action_name: str | None = None
+        self._answer_started = False
+        self._answer_offset = 0
 
     def reset(self):
         """重置解析器状态。"""
         self._buffer = ""
-        self._current_step_type = None
-        self._current_content = ""
-        self._action_name = None
+        self._answer_started = False
+        self._answer_offset = 0
 
     def feed(self, token: str) -> list[ReActStep]:
-        """输入一个 token，返回解析完成的步骤列表（可能为空）。
+        """输入一个 token，返回可安全即时输出的步骤。
 
-        Args:
-            token: 新的 token。
-
-        Returns:
-            在本次 token 后识别完成的步骤列表。
+        当前只即时返回 Answer 增量；Thought/Action 需要完整上下文，
+        在 flush() 中一次性返回，避免半截 JSON 触发工具调用。
         """
         self._buffer += token
-        completed_steps: list[ReActStep] = []
+        answer_match = ReActParser._ANSWER_RE.search(self._buffer)
+        if not answer_match:
+            return []
 
-        # 按行检查
-        while "\n" in self._buffer:
-            line, self._buffer = self._buffer.split("\n", 1)
-            line = line.strip()
+        answer_start = answer_match.start(1)
+        if not self._answer_started:
+            self._answer_started = True
+            self._answer_offset = answer_start
 
-            if not line:
-                continue
+        if len(self._buffer) <= self._answer_offset:
+            return []
 
-            step = self._process_line(line)
-            if step:
-                completed_steps.append(step)
-
-        return completed_steps
+        delta = self._buffer[self._answer_offset:]
+        self._answer_offset = len(self._buffer)
+        if not delta:
+            return []
+        return [ReActStep(step_type="answer", content=delta)]
 
     def flush(self) -> list[ReActStep]:
-        """处理缓冲区中剩余的内容。"""
-        steps: list[ReActStep] = []
-        remaining = self._buffer.strip()
-        if remaining:
-            step = self._process_line(remaining)
-            if step:
-                steps.append(step)
-        # 如果还有未完成的答案内容
-        if self._current_step_type == "answer" and self._current_content:
-            steps.append(ReActStep(
-                step_type="answer",
-                content=self._current_content.strip(),
-            ))
-            self._current_content = ""
+        """处理完整 LLM 输出并返回结构化步骤。"""
+        steps = ReActParser().parse(self._buffer)
         self.reset()
         return steps
-
-    def _process_line(self, line: str) -> ReActStep | None:
-        """处理一行文本。"""
-        if line.startswith("Thought:"):
-            content = line[len("Thought:"):].strip()
-            self._current_step_type = "thought"
-            return ReActStep(step_type="thought", content=content)
-
-        elif line.startswith("Action:"):
-            self._action_name = line[len("Action:"):].strip()
-            self._current_step_type = "action"
-            return None  # 等待 Action Input
-
-        elif line.startswith("Action Input:"):
-            raw_input = line[len("Action Input:"):].strip()
-            tool_input = ReActParser._parse_json_input(raw_input)
-            step = ReActStep(
-                step_type="action",
-                content=f"调用 {self._action_name}",
-                tool_name=self._action_name,
-                tool_input=tool_input,
-            )
-            self._action_name = None
-            return step
-
-        elif line.startswith("Answer:"):
-            content = line[len("Answer:"):].strip()
-            self._current_step_type = "answer"
-            self._current_content = content
-            return ReActStep(step_type="answer", content=content)
-
-        else:
-            # 正文续行 — 追加到当前步骤
-            if self._current_step_type == "answer":
-                self._current_content += "\n" + line
-
-        return None

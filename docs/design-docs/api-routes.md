@@ -42,7 +42,7 @@
 | 方法 | 路径 | 功能 |
 |---|---|---|
 | POST | `/api/query` | ReAct Agent 非流式问答 |
-| POST | `/api/query/stream` | ReAct Agent SSE 流式问答（结构化 AgentEvent JSON）|
+| POST | `/api/query/stream` | ReAct Agent SSE 流式问答（结构化 AgentEvent JSON，含 token 增量、工具调用状态和 run_id）|
 
 ### 深度研究
 
@@ -115,6 +115,22 @@
 ---
 
 ## 开发模式通信
+
+### `/api/query/stream` SSE 事件
+
+流式问答保持 `data: {...}\n\n` 和 `data: [DONE]` 结束标记。主要事件：
+
+| event_type | 用途 |
+|---|---|
+| `llm_delta` | 当前 LLM 原始输出片段，用于前端实时显示 |
+| `thought` | Agent 显式 `Thought:` 思考摘要 |
+| `action_start` | 准备调用工具，包含 `tool_name` 和 `tool_input` |
+| `action_result` | 工具返回摘要，包含精简 `tool_result` 元数据 |
+| `answer_delta` | 最终回答增量 |
+| `answer` | 最终完整回答 |
+| `error` | 流式执行错误 |
+
+每个事件包含 `run_id`、`sequence`、`timestamp`，后端 structlog 使用同一 `run_id` 记录更完整的审计信息。
 
 ```
 浏览器                  Vite Dev Server (:5173)          FastAPI (:8005)

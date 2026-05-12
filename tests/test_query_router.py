@@ -19,7 +19,7 @@ def test_query_non_stream(monkeypatch):
         answer="ok",
         events=[SimpleNamespace(to_dict=lambda: {"event_type": "answer", "content": "ok"})],
     )
-    fake_service = SimpleNamespace(answer_agent=lambda q: fake_result)
+    fake_service = SimpleNamespace(answer_agent=lambda q, run_id=None: fake_result)
     monkeypatch.setattr(query_router, "_get_query_service", lambda: fake_service)
 
     client = TestClient(_build_app())
@@ -35,7 +35,9 @@ def test_query_stream_sse_format(monkeypatch):
         SimpleNamespace(to_dict=lambda: {"event_type": "thought", "content": "t"}),
         SimpleNamespace(to_dict=lambda: {"event_type": "answer", "content": "a"}),
     ]
-    fake_service = SimpleNamespace(answer_agent_stream=lambda q: iter(fake_events))
+    fake_service = SimpleNamespace(
+        answer_agent_stream=lambda q, run_id=None: iter(fake_events)
+    )
     monkeypatch.setattr(query_router, "_get_query_service", lambda: fake_service)
 
     client = TestClient(_build_app())
@@ -44,4 +46,21 @@ def test_query_stream_sse_format(monkeypatch):
     text = resp.text
     assert 'data: {"event_type": "thought", "content": "t"}' in text
     assert 'data: {"event_type": "answer", "content": "a"}' in text
+    assert "data: [DONE]" in text
+
+
+def test_query_stream_error_event(monkeypatch):
+    def fail_stream(q, run_id=None):
+        raise RuntimeError("stream failed")
+        yield
+
+    fake_service = SimpleNamespace(answer_agent_stream=fail_stream)
+    monkeypatch.setattr(query_router, "_get_query_service", lambda: fake_service)
+
+    client = TestClient(_build_app())
+    resp = client.post("/api/query/stream", json={"question": "hi"})
+    assert resp.status_code == 200
+    text = resp.text
+    assert '"event_type": "error"' in text
+    assert "stream failed" in text
     assert "data: [DONE]" in text

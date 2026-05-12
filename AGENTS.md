@@ -76,7 +76,8 @@ python -m delivery.cli ask "今天有什么重要新闻？"
 | [docs/DESIGN.md](docs/DESIGN.md) | 设计哲学 |
 | [docs/PLANS.md](docs/PLANS.md) | 开发路线图 |
 | [docs/design-docs/](docs/design-docs/index.md) | 详细设计（选型论证、Protocol、Agent） |
-| [docs/generated/db-schema.md](docs/generated/db-schema.md) | 数据库 Schema |
+| [docs/generated/dbdoc/](docs/generated/dbdoc/) | 数据库 Schema (tbls 自动生成) |
+| [docs/generated/db-schema.md](docs/generated/db-schema.md) | 数据库业务规则补充 |
 | [docs/product-specs/api-reference.md](docs/product-specs/api-reference.md) | API 路由参考 |
 | [docs/references/external-deps.md](docs/references/external-deps.md) | 外部依赖配置 |
 | [docs/exec-plans/tech-debt-tracker.md](docs/exec-plans/tech-debt-tracker.md) | 技术债务清单 |

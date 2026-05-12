@@ -1,5 +1,6 @@
 """AI 问答 API — ReAct Agent 模式"""
 import json
+import uuid
 import structlog
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -29,12 +30,20 @@ def _get_query_service():
 @router.post("")
 def query(req: QueryRequest):
     """非流式问答（ReAct Agent 模式）"""
+    run_id = str(uuid.uuid4())
+    structlog.contextvars.bind_contextvars(agent_run_id=run_id)
     try:
         service = _get_query_service()
-        result = service.answer_agent(req.question)
+        logger.info(
+            "agent.query_start",
+            run_id=run_id,
+            mode="non_stream",
+            question_length=len(req.question),
+        )
+        result = service.answer_agent(req.question, run_id=run_id)
         return {"answer": result.answer, "events": [e.to_dict() for e in result.events]}
     except Exception as e:
-        logger.error(f"问答失败: {e}")
+        logger.exception("agent.query_error", run_id=run_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"问答失败: {e}")
 
 
@@ -43,27 +52,45 @@ def query_stream(req: QueryRequest):
     """SSE 流式问答 — ReAct Agent 模式
 
     每个事件以 JSON 格式传输：
+        data: {"event_type": "llm_delta", "content": "..."}
         data: {"event_type": "thought", "content": "..."}
-        data: {"event_type": "action", "tool_name": "...", "tool_input": {...}}
-        data: {"event_type": "observation", "content": "..."}
+        data: {"event_type": "action_start", "tool_name": "...", "tool_input": {...}}
+        data: {"event_type": "action_result", "content": "...", "tool_result": {...}}
+        data: {"event_type": "answer_delta", "content": "..."}
         data: {"event_type": "answer", "content": "..."}
         data: [DONE]
     """
+    run_id = str(uuid.uuid4())
     try:
         service = _get_query_service()
 
         def event_generator():
+            structlog.contextvars.bind_contextvars(agent_run_id=run_id)
+            logger.info(
+                "agent.stream_start",
+                run_id=run_id,
+                question_length=len(req.question),
+            )
             try:
-                for event in service.answer_agent_stream(req.question):
+                for event in service.answer_agent_stream(req.question, run_id=run_id):
                     event_data = json.dumps(
                         event.to_dict(), ensure_ascii=False
                     )
                     yield f"data: {event_data}\n\n"
+                logger.info("agent.stream_complete", run_id=run_id)
                 yield "data: [DONE]\n\n"
             except Exception as e:
-                logger.error(f"流式问答失败: {e}")
+                logger.exception(
+                    "agent.stream_error",
+                    run_id=run_id,
+                    error=str(e),
+                )
                 error_event = json.dumps(
-                    {"event_type": "error", "content": str(e)},
+                    {
+                        "event_type": "error",
+                        "content": str(e),
+                        "run_id": run_id,
+                    },
                     ensure_ascii=False,
                 )
                 yield f"data: {error_event}\n\n"
@@ -79,5 +106,5 @@ def query_stream(req: QueryRequest):
             },
         )
     except Exception as e:
-        logger.error(f"流式问答初始化失败: {e}")
+        logger.exception("agent.stream_init_error", run_id=run_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"问答失败: {e}")

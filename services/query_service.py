@@ -24,7 +24,7 @@ class QueryService:
         self.llm_client = llm_client
         self.embedding_client = embedding_client
 
-    def _build_agent(self):
+    def _build_agent(self, run_id: str | None = None):
         from agent.react.agent import ReActAgent
         from agent.tools.registry import get_tool_registry
 
@@ -32,14 +32,17 @@ class QueryService:
             llm_client=self.llm_client,
             tool_registry=get_tool_registry(),
             max_steps=5,
+            run_id=run_id,
         )
 
-    def answer_agent(self, question: str):
+    def answer_agent(self, question: str, run_id: str | None = None):
         """ReAct Agent 非流式问答。"""
-        agent = self._build_agent()
+        agent = self._build_agent(run_id=run_id)
         return agent.run(question)
 
-    def answer_agent_stream(self, question: str) -> Iterator:
+    def answer_agent_stream(
+        self, question: str, run_id: str | None = None
+    ) -> Iterator:
         """ReAct Agent 流式问答。
 
         使用 ReAct 架构让 LLM 自主决策是否调用工具，
@@ -51,5 +54,5 @@ class QueryService:
         Yields:
             AgentEvent: 推理/行动/观察/回答事件。
         """
-        agent = self._build_agent()
+        agent = self._build_agent(run_id=run_id)
         yield from agent.run_stream(question)

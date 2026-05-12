@@ -11,11 +11,13 @@
 
 import json
 import time
+import uuid
 import structlog
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Iterator, Literal
 
-from agent.react.parser import ReActParser, ReActStep
+from agent.react.parser import ReActParser, StreamingReActParser
 from agent.react.prompts import (
     build_react_system_prompt,
     format_tool_descriptions,
@@ -25,7 +27,33 @@ from agent.tools.registry import ToolRegistry
 logger = structlog.get_logger(__name__)
 
 # 事件类型
-EventType = Literal["thought", "action", "observation", "answer", "error"]
+EventType = Literal[
+    "llm_delta",
+    "thought",
+    "action_start",
+    "action_result",
+    "answer_delta",
+    "answer",
+    "error",
+    # Legacy event names accepted for compatibility with stored events/tests.
+    "action",
+    "observation",
+]
+
+MAX_EVENT_CONTENT_CHARS = 4000
+MAX_LOG_VALUE_CHARS = 12000
+SENSITIVE_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "access_token",
+    "refresh_token",
+    "token",
+    "secret",
+    "password",
+    "webhook_url",
+    "url",
+}
 
 
 @dataclass
@@ -34,9 +62,16 @@ class AgentEvent:
 
     event_type: EventType
     content: str = ""
+    run_id: str | None = None
+    step_index: int | None = None
+    sequence: int | None = None
+    timestamp: str | None = None
+    duration_ms: int | None = None
+    raw_content: str | None = None
     tool_name: str | None = None
     tool_input: dict | None = None
     tool_result: dict | None = None
+    metadata: dict | None = None
 
     def to_dict(self) -> dict:
         """序列化为字典（用于 JSON 传输）。"""
@@ -44,12 +79,26 @@ class AgentEvent:
             "event_type": self.event_type,
             "content": self.content,
         }
+        if self.run_id is not None:
+            d["run_id"] = self.run_id
+        if self.step_index is not None:
+            d["step_index"] = self.step_index
+        if self.sequence is not None:
+            d["sequence"] = self.sequence
+        if self.timestamp is not None:
+            d["timestamp"] = self.timestamp
+        if self.duration_ms is not None:
+            d["duration_ms"] = self.duration_ms
+        if self.raw_content is not None:
+            d["raw_content"] = self.raw_content
         if self.tool_name is not None:
             d["tool_name"] = self.tool_name
         if self.tool_input is not None:
             d["tool_input"] = self.tool_input
         if self.tool_result is not None:
             d["tool_result"] = self.tool_result
+        if self.metadata is not None:
+            d["metadata"] = self.metadata
         return d
 
 
@@ -95,12 +144,44 @@ class ReActAgent:
         tool_registry: ToolRegistry,
         max_steps: int = 5,
         system_prompt_override: str | None = None,
+        run_id: str | None = None,
     ):
         self.llm_client = llm_client
         self.tool_registry = tool_registry
         self.max_steps = max_steps
         self.system_prompt_override = system_prompt_override
         self.parser = ReActParser()
+        self.run_id = run_id or str(uuid.uuid4())
+        self._sequence = 0
+
+    def _new_event(
+        self,
+        event_type: EventType,
+        content: str = "",
+        *,
+        step_index: int | None = None,
+        duration_ms: int | None = None,
+        raw_content: str | None = None,
+        tool_name: str | None = None,
+        tool_input: dict | None = None,
+        tool_result: dict | None = None,
+        metadata: dict | None = None,
+    ) -> AgentEvent:
+        self._sequence += 1
+        return AgentEvent(
+            event_type=event_type,
+            content=content,
+            run_id=self.run_id,
+            step_index=step_index,
+            sequence=self._sequence,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            duration_ms=duration_ms,
+            raw_content=raw_content,
+            tool_name=tool_name,
+            tool_input=_sanitize_for_log(tool_input) if tool_input else None,
+            tool_result=tool_result,
+            metadata=metadata,
+        )
 
     def run(self, question: str) -> AgentResult:
         """同步执行 ReAct 循环，返回完整结果。
@@ -115,11 +196,11 @@ class ReActAgent:
         start_time = time.time()
 
         try:
-            for event in self._react_loop(question):
+            for event in self._react_loop(question, stream_llm=False):
                 result.events.append(event)
                 if event.event_type == "answer":
                     result.answer = event.content
-                elif event.event_type == "action" and event.tool_name:
+                elif event.event_type in ("action_start", "action") and event.tool_name:
                     result.tools_called.append(event.tool_name)
                     result.total_steps += 1
                 elif event.event_type == "error":
@@ -144,15 +225,17 @@ class ReActAgent:
             AgentEvent: 每个推理/行动/观察/回答步骤。
         """
         try:
-            yield from self._react_loop(question)
+            yield from self._react_loop(question, stream_llm=True)
         except Exception as e:
             logger.exception(f"ReAct Agent 流式执行异常: {e}")
-            yield AgentEvent(
+            yield self._new_event(
                 event_type="error",
                 content=f"处理问题时发生错误: {e}",
             )
 
-    def _react_loop(self, question: str) -> Iterator[AgentEvent]:
+    def _react_loop(
+        self, question: str, *, stream_llm: bool
+    ) -> Iterator[AgentEvent]:
         """ReAct 核心循环。
 
         1. 构建 system prompt + 用户问题
@@ -174,30 +257,59 @@ class ReActAgent:
             {"role": "user", "content": question},
         ]
 
+        logger.info(
+            "agent.run_start",
+            run_id=self.run_id,
+            max_steps=self.max_steps,
+            question_length=len(question),
+        )
+
         for step_num in range(self.max_steps):
-            logger.info(f"ReAct 步骤 {step_num + 1}/{self.max_steps}")
+            step_index = step_num + 1
+            logger.info(
+                "agent.step_start",
+                run_id=self.run_id,
+                step_index=step_index,
+                max_steps=self.max_steps,
+            )
 
             # 调用 LLM
             try:
-                llm_output = self.llm_client.generate_with_history(messages)
+                llm_output, streamed_answer = yield from self._generate_llm_output(
+                    messages=messages,
+                    step_index=step_index,
+                    stream_llm=stream_llm,
+                )
             except Exception as e:
-                logger.error(f"LLM 调用失败: {e}")
-                yield AgentEvent(
+                logger.exception(
+                    "agent.llm_error",
+                    run_id=self.run_id,
+                    step_index=step_index,
+                    error=str(e),
+                )
+                yield self._new_event(
                     event_type="error",
                     content=f"AI 模型调用失败: {e}",
+                    step_index=step_index,
                 )
                 return
 
-            logger.debug(f"LLM 输出:\n{llm_output}")
+            logger.debug(
+                "agent.llm_output",
+                run_id=self.run_id,
+                step_index=step_index,
+                output=_truncate_value(llm_output, MAX_LOG_VALUE_CHARS),
+            )
 
             # 解析输出
             steps = self.parser.parse(llm_output)
 
             if not steps:
                 # LLM 输出无法解析，直接作为回答
-                yield AgentEvent(
+                yield self._new_event(
                     event_type="answer",
                     content=llm_output,
+                    step_index=step_index,
                 )
                 return
 
@@ -210,9 +322,11 @@ class ReActAgent:
 
             for parsed_step in steps:
                 if parsed_step.step_type == "thought":
-                    yield AgentEvent(
+                    yield self._new_event(
                         event_type="thought",
                         content=parsed_step.content,
+                        step_index=step_index,
+                        raw_content=parsed_step.content,
                     )
 
                 elif parsed_step.step_type == "action":
@@ -220,20 +334,25 @@ class ReActAgent:
                     tool_name = parsed_step.tool_name
                     tool_input = parsed_step.tool_input or {}
 
-                    yield AgentEvent(
-                        event_type="action",
+                    yield self._new_event(
+                        event_type="action_start",
                         content=parsed_step.content,
+                        step_index=step_index,
                         tool_name=tool_name,
                         tool_input=tool_input,
                     )
 
                     # 执行工具
-                    observation = self._execute_tool(tool_name, tool_input)
+                    observation, tool_event = self._execute_tool(
+                        tool_name, tool_input, step_index
+                    )
 
-                    yield AgentEvent(
-                        event_type="observation",
+                    yield self._new_event(
+                        event_type="action_result",
                         content=observation,
+                        step_index=step_index,
                         tool_name=tool_name,
+                        tool_result=tool_event,
                     )
 
                     # 将工具结果追加到消息历史
@@ -244,9 +363,16 @@ class ReActAgent:
 
                 elif parsed_step.step_type == "answer":
                     has_answer = True
-                    yield AgentEvent(
+                    if not streamed_answer:
+                        yield self._new_event(
+                            event_type="answer_delta",
+                            content=parsed_step.content,
+                            step_index=step_index,
+                        )
+                    yield self._new_event(
                         event_type="answer",
                         content=parsed_step.content,
+                        step_index=step_index,
                     )
 
             if has_answer:
@@ -254,14 +380,19 @@ class ReActAgent:
 
             # 如果本轮没有 action 也没有 answer，强制结束
             if not has_action:
-                yield AgentEvent(
+                yield self._new_event(
                     event_type="answer",
                     content=llm_output,
+                    step_index=step_index,
                 )
                 return
 
         # 达到最大步数，要求 LLM 基于已有信息给出回答
-        logger.warning(f"ReAct 达到最大步数 {self.max_steps}，强制结束")
+        logger.warning(
+            "agent.max_steps_reached",
+            run_id=self.run_id,
+            max_steps=self.max_steps,
+        )
 
         messages.append({
             "role": "user",
@@ -281,43 +412,184 @@ class ReActAgent:
                 if s.step_type == "answer":
                     answer_content = s.content
                     break
-            yield AgentEvent(
+            yield self._new_event(
                 event_type="answer",
                 content=answer_content,
+                step_index=self.max_steps + 1,
             )
         except Exception as e:
-            yield AgentEvent(
+            logger.exception(
+                "agent.final_answer_error",
+                run_id=self.run_id,
+                error=str(e),
+            )
+            yield self._new_event(
                 event_type="error",
                 content=f"生成最终回答时失败: {e}",
+                step_index=self.max_steps + 1,
             )
 
+    def _generate_llm_output(
+        self,
+        *,
+        messages: list[dict],
+        step_index: int,
+        stream_llm: bool,
+    ) -> Iterator[AgentEvent | tuple[str, bool]]:
+        """调用 LLM，流式模式下同时产出 token 事件。"""
+        if not stream_llm or not hasattr(self.llm_client, "generate_with_history_stream"):
+            output = self.llm_client.generate_with_history(messages)
+            return_value = (output, False)
+            yield from ()
+            return return_value
+
+        parser = StreamingReActParser()
+        chunks: list[str] = []
+        streamed_answer = False
+        started = time.time()
+
+        for token in self.llm_client.generate_with_history_stream(messages):
+            chunks.append(token)
+            yield self._new_event(
+                event_type="llm_delta",
+                content=token,
+                step_index=step_index,
+            )
+            for step in parser.feed(token):
+                if step.step_type == "answer":
+                    streamed_answer = True
+                    yield self._new_event(
+                        event_type="answer_delta",
+                        content=step.content,
+                        step_index=step_index,
+                    )
+
+        output = "".join(chunks)
+        parser.flush()
+        logger.info(
+            "agent.llm_stream_complete",
+            run_id=self.run_id,
+            step_index=step_index,
+            duration_ms=round((time.time() - started) * 1000),
+            output_length=len(output),
+        )
+        return_value = (output, streamed_answer)
+        yield from ()
+        return return_value
+
     def _execute_tool(
-        self, tool_name: str | None, tool_input: dict
-    ) -> str:
+        self, tool_name: str | None, tool_input: dict, step_index: int
+    ) -> tuple[str, dict]:
         """执行工具并返回观察结果文本。"""
         if not tool_name:
-            return "错误: 未指定工具名称"
+            content = "错误: 未指定工具名称"
+            return content, {"success": False, "error": content}
 
         if not self.tool_registry.has(tool_name):
             available = ", ".join(self.tool_registry.list_names())
-            return (
+            content = (
                 f"错误: 工具 '{tool_name}' 不存在。"
                 f"可用工具: {available}"
             )
+            logger.warning(
+                "agent.tool_missing",
+                run_id=self.run_id,
+                step_index=step_index,
+                tool_name=tool_name,
+                available_tools=self.tool_registry.list_names(),
+            )
+            return content, {"success": False, "error": content}
 
         try:
             tool = self.tool_registry.get(tool_name)
+            started = time.time()
+            logger.info(
+                "agent.tool_start",
+                run_id=self.run_id,
+                step_index=step_index,
+                tool_name=tool_name,
+                tool_input=_sanitize_for_log(tool_input),
+            )
             result = tool.execute(**tool_input)
+            result_dict = _sanitize_for_log(result.to_dict())
+            elapsed_ms = round((time.time() - started) * 1000)
 
             if result.success:
                 # 将工具结果转为字符串
                 data = result.data
                 if isinstance(data, str):
-                    return data
-                return json.dumps(data, ensure_ascii=False, indent=2)
+                    observation = data
+                else:
+                    observation = json.dumps(data, ensure_ascii=False, indent=2)
+                logger.info(
+                    "agent.tool_result",
+                    run_id=self.run_id,
+                    step_index=step_index,
+                    tool_name=tool_name,
+                    duration_ms=elapsed_ms,
+                    result=result_dict,
+                )
             else:
-                return f"工具执行失败: {result.error}"
+                observation = f"工具执行失败: {result.error}"
+                logger.warning(
+                    "agent.tool_error",
+                    run_id=self.run_id,
+                    step_index=step_index,
+                    tool_name=tool_name,
+                    duration_ms=elapsed_ms,
+                    result=result_dict,
+                )
+
+            return _truncate_for_event(observation), {
+                "success": result.success,
+                "tool_name": result.tool_name,
+                "execution_time": result.execution_time,
+                "truncated": len(observation) > MAX_EVENT_CONTENT_CHARS,
+                "full_length": len(observation),
+            }
 
         except Exception as e:
-            logger.error(f"工具 '{tool_name}' 执行异常: {e}")
-            return f"工具执行异常: {e}"
+            logger.exception(
+                "agent.tool_exception",
+                run_id=self.run_id,
+                step_index=step_index,
+                tool_name=tool_name,
+                error=str(e),
+            )
+            content = f"工具执行异常: {e}"
+            return content, {"success": False, "error": str(e)}
+
+
+def _truncate_for_event(value: str) -> str:
+    if len(value) <= MAX_EVENT_CONTENT_CHARS:
+        return value
+    return value[:MAX_EVENT_CONTENT_CHARS] + "\n... [truncated]"
+
+
+def _truncate_value(value: Any, max_chars: int) -> Any:
+    if isinstance(value, str):
+        if len(value) <= max_chars:
+            return value
+        return {
+            "value": value[:max_chars],
+            "truncated": True,
+            "full_length": len(value),
+        }
+    return value
+
+
+def _sanitize_for_log(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, item in value.items():
+            key_text = str(key).lower()
+            if any(sensitive in key_text for sensitive in SENSITIVE_KEYS):
+                sanitized[key] = "***"
+            else:
+                sanitized[key] = _sanitize_for_log(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_for_log(item) for item in value]
+    if isinstance(value, str):
+        return _truncate_value(value, MAX_LOG_VALUE_CHARS)
+    return value
