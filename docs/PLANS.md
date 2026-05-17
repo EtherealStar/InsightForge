@@ -6,7 +6,7 @@
 
 项目处于 **Demo+** 阶段：前后端分离架构 + ReAct Agent + 深度研究 + Web 搜索 + AI 摘要 + Rerank + 混合检索 RAG + Webhook 推送。
 
-核心基础设施已全部升级为生产级组件（PostgreSQL + pgvector + Celery + Docker Compose）。
+核心基础设施已全部升级为生产级组件（PostgreSQL + pgvector + Celery + Docker Compose），并已提供 VPS Docker Compose 一键部署入口。
 
 ## 待推进事项
 
@@ -25,10 +25,15 @@
 
 | 事项 | 说明 | 优先级 |
 |---|---|---|
-| 云端部署 (Railway/VPS) | 任何设备可访问 | P2 |
 | Telegram Bot 集成 | 平台机器人检索+回答 | P3 |
 | 可编辑提示词 | 世界书化分析模板 | P3 |
 | 多 Agent 分析 | 多 Agent 协作生成概要 | P3 |
+
+### 已完成
+
+| 事项 | 说明 |
+|---|---|
+| VPS Docker Compose 部署 | 应用镜像 + Web/Worker/Beat/Migrate/Caddy 编排，见 `docs/deployment/docker-vps.md` |
 
 ---
 

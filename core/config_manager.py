@@ -26,6 +26,10 @@ from core.factory import (
     create_rerank_client,
     create_summary_llm_client,
     create_chunking_service,
+    create_webhook_service,
+    create_deep_research_service,
+    create_query_service,
+    create_memory_service,
 )
 
 logger = structlog.get_logger(__name__)
@@ -61,7 +65,7 @@ class ConfigManager:
         self._version: int = 0
         self._component_lock = threading.Lock()
 
-        # 缓存的组件实例
+        # 缓存的基础设施组件实例
         self._article_store: Any = None
         self._agent_session_store: Any = None
         self._memory_store: Any = None
@@ -71,6 +75,12 @@ class ConfigManager:
         self._rerank_client: Any = None
         self._summary_llm_client: Any = None
         self._chunking_service: Any = None
+
+        # 缓存的 Service 层实例
+        self._webhook_service: Any = None
+        self._deep_research_service: Any = None
+        self._query_service: Any = None
+        self._memory_service: Any = None
 
         # 变更回调列表
         self._callbacks: list[Callable[[dict], None]] = []
@@ -115,6 +125,13 @@ class ConfigManager:
             except Exception as e:
                 logger.warning(f"分块服务创建失败: {e}")
                 self._chunking_service = None
+
+            # Service 层组件
+            self._webhook_service = create_webhook_service()
+            self._deep_research_service = create_deep_research_service()
+            # query_service / memory_service 依赖 LLM，延迟到属性访问时懒加载
+            self._query_service = None
+            self._memory_service = None
 
     # ------------------------------------------------------------------
     # 公开 API
@@ -208,6 +225,13 @@ class ConfigManager:
                 except Exception as e:
                     logger.error(f"重建 Summary LLM 客户端失败: {e}")
 
+            # Service 层：当依赖的基础设施组件变更时，清空缓存触发懒加载重建
+            if changed_keys & (llm_fields | store_fields | embed_fields):
+                self._query_service = None
+                self._memory_service = None
+                rebuilt.append("query_service (invalidated)")
+                rebuilt.append("memory_service (invalidated)")
+
         # 通知注册的回调
         for cb in self._callbacks:
             try:
@@ -279,6 +303,34 @@ class ConfigManager:
     def chunking_service(self):
         """返回缓存的分块服务单例。"""
         return self._chunking_service
+
+    @property
+    def webhook_service(self):
+        """返回缓存的 WebhookService 单例。"""
+        if self._webhook_service is None:
+            self._webhook_service = create_webhook_service()
+        return self._webhook_service
+
+    @property
+    def deep_research_service(self):
+        """返回缓存的 DeepResearchService 单例。"""
+        if self._deep_research_service is None:
+            self._deep_research_service = create_deep_research_service()
+        return self._deep_research_service
+
+    @property
+    def query_service(self):
+        """返回缓存的 QueryService 单例（懒加载，依赖 LLM）。"""
+        if self._query_service is None:
+            self._query_service = create_query_service(self._config, self)
+        return self._query_service
+
+    @property
+    def memory_service(self):
+        """返回缓存的 MemoryService 单例（懒加载）。"""
+        if self._memory_service is None:
+            self._memory_service = create_memory_service(self)
+        return self._memory_service
 
     @property
     def version(self) -> int:

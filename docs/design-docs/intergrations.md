@@ -31,6 +31,21 @@
 
 所有容器配置 `healthcheck`，通过 Docker Named Volumes 持久化数据。
 
+本地 `docker-compose.yml` 只启动基础设施，应用仍在本机 Python/Vite 进程中运行。
+
+生产 `docker-compose.prod.yml` 增加以下服务：
+
+| 服务 | 镜像/来源 | 对外端口 | 说明 |
+|---|---|---|---|
+| `web` | 本仓库 `Dockerfile` | 无直接发布 | FastAPI + Vue 静态资源 |
+| `worker` | 本仓库 `Dockerfile` | 无 | Celery Worker |
+| `beat` | 本仓库 `Dockerfile` | 无 | Celery Beat |
+| `migrate` | 本仓库 `Dockerfile` | 无 | 一次性初始化 schema 并执行 migrations |
+| `caddy` | `caddy:2-alpine` | 80/443 | Basic Auth + 反向代理 |
+| `flower` | 本仓库 `Dockerfile` | profile 启用后内部 5555 | 可选任务监控 |
+
+生产部署入口见 [../deployment/docker-vps.md](../deployment/docker-vps.md)。`.env.deploy.example` 提供容器内连接串，`data`、`output`、PostgreSQL、Redis、Caddy 数据均使用 Docker Named Volumes。
+
 ---
 
 ## ConfigManager 组件管理

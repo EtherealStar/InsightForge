@@ -153,3 +153,67 @@ def create_chunking_service(config: AppConfig):
         target_parent_tokens=config.chunk_target_parent_tokens,
         overlap_tokens=config.chunk_overlap_tokens,
     )
+
+
+# ======================================================================
+# Service 层工厂函数
+# ======================================================================
+
+
+def create_webhook_service():
+    """创建 Webhook 推送服务。"""
+    from services.webhook_service import WebhookService
+
+    return WebhookService()
+
+
+def create_deep_research_service(output_dir: str | None = None):
+    """创建研究报告持久化服务。"""
+    import os
+    from services.deep_research_service import DeepResearchService
+
+    _dir = output_dir or os.path.join("output", "research")
+    return DeepResearchService(output_dir=_dir)
+
+
+def create_query_service(config: AppConfig, mgr):
+    """创建 QueryService，组装所有依赖。
+
+    Args:
+        config: 当前应用配置。
+        mgr: ConfigManager 实例，用于获取缓存的基础设施组件。
+    """
+    from services.query_service import QueryService
+    from services.memory_service import MemoryService
+
+    memory_service = None
+    if mgr.memory_store and mgr.agent_session_store:
+        memory_service = MemoryService(
+            mgr.memory_store,
+            mgr.agent_session_store,
+            mgr.llm_client,
+        )
+
+    return QueryService(
+        mgr.article_store,
+        mgr.vector_store,
+        mgr.llm_client,
+        mgr.embedding_client,
+        session_store=mgr.agent_session_store,
+        memory_service=memory_service,
+    )
+
+
+def create_memory_service(mgr):
+    """创建 MemoryService。
+
+    Args:
+        mgr: ConfigManager 实例，用于获取缓存的基础设施组件。
+    """
+    from services.memory_service import MemoryService
+
+    return MemoryService(
+        mgr.memory_store,
+        mgr.agent_session_store,
+        mgr.llm_client,
+    )

@@ -1,0 +1,9 @@
+{$CADDY_DOMAIN:localhost} {
+	encode zstd gzip
+
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	reverse_proxy web:8005
+}

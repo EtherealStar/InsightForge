@@ -1,4 +1,4 @@
-﻿"""深度研究 API — 研究报告 CRUD + SSE 流式研究"""
+"""深度研究 API — 研究报告 CRUD + SSE 流式研究"""
 import io
 import json
 import os
@@ -38,8 +38,6 @@ def _get_plan_execute_runner():
     from core.config_manager import get_config_manager
     from agent.react.plan_execute_runner import PlanExecuteRunner
     from agent.tools.registry import get_tool_registry
-    from services.deep_research_service import DeepResearchService
-    from services.memory_service import MemoryService
 
     mgr = get_config_manager()
     if not mgr.llm_client:
@@ -50,12 +48,8 @@ def _get_plan_execute_runner():
         llm_client=mgr.llm_client,
         tool_registry=get_tool_registry(),
         session_store=mgr.agent_session_store,
-        report_service=DeepResearchService(output_dir=_RESEARCH_DIR),
-        memory_service=MemoryService(
-            mgr.memory_store,
-            mgr.agent_session_store,
-            mgr.llm_client,
-        ),
+        report_service=mgr.deep_research_service,
+        memory_service=mgr.memory_service,
         max_steps=15,
     )
 
@@ -176,9 +170,9 @@ def get_research_session(session_id: str):
 @router.get("")
 def list_reports():
     """获取所有研究报告列表"""
-    from services.deep_research_service import DeepResearchService
+    from core.config_manager import get_config_manager
 
-    service = DeepResearchService(output_dir=_RESEARCH_DIR)
+    service = get_config_manager().deep_research_service
     reports = service.list_reports()
     return {"reports": reports}
 
@@ -187,9 +181,9 @@ def list_reports():
 def get_report(filename: str):
     """获取单份研究报告内容"""
     _validate_filename(filename)
-    from services.deep_research_service import DeepResearchService
+    from core.config_manager import get_config_manager
 
-    service = DeepResearchService(output_dir=_RESEARCH_DIR)
+    service = get_config_manager().deep_research_service
     report = service.get_report(filename)
     if report is None:
         raise HTTPException(status_code=404, detail="未找到该研究报告")
@@ -200,9 +194,9 @@ def get_report(filename: str):
 def delete_report(filename: str):
     """删除一份研究报告"""
     _validate_filename(filename)
-    from services.deep_research_service import DeepResearchService
+    from core.config_manager import get_config_manager
 
-    service = DeepResearchService(output_dir=_RESEARCH_DIR)
+    service = get_config_manager().deep_research_service
     if service.delete_report(filename):
         return {"status": "ok", "message": f"已删除: {filename}"}
     raise HTTPException(status_code=404, detail="未找到该研究报告")
@@ -216,12 +210,14 @@ def batch_delete_reports(req: BatchFilenamesRequest):
     if not req.filenames:
         raise HTTPException(status_code=400, detail="请至少选择一份报告")
 
+    from core.config_manager import get_config_manager
+
+    service = get_config_manager().deep_research_service
     deleted = 0
     errors = []
     for filename in req.filenames:
         try:
             _validate_filename(filename)
-            service = DeepResearchService(output_dir=_RESEARCH_DIR)
             if service.delete_report(filename):
                 deleted += 1
             else:
@@ -275,16 +271,16 @@ def batch_export_reports(req: BatchFilenamesRequest):
 def push_report(filename: str):
     """推送研究报告到所有启用的 Webhook 渠道"""
     _validate_filename(filename)
-    from services.deep_research_service import DeepResearchService
+    from core.config_manager import get_config_manager
 
-    service = DeepResearchService(output_dir=_RESEARCH_DIR)
+    mgr = get_config_manager()
+    service = mgr.deep_research_service
     report = service.get_report(filename)
     if report is None:
         raise HTTPException(status_code=404, detail="未找到该研究报告")
 
     try:
-        from services.webhook_service import WebhookService
-        webhook_service = WebhookService()
+        webhook_service = mgr.webhook_service
         results = webhook_service.broadcast(report["content"])
         push_ok = sum(1 for r in results if r["status"] == "ok")
         return {

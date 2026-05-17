@@ -190,3 +190,26 @@ class MemoryStoreProtocol(Protocol):
 ```
 
 核心记忆采用版本化 revision；持久记忆默认 pending，用户确认后变为 active 并进入 MEMORY 索引。
+
+---
+
+## 8. WebhookServiceProtocol
+
+Webhook 推送服务协议，仅定义跨层消费的推送核心方法。CRUD 方法（`add_channel`/`update_channel`/`delete_channel`/`test_channel`）仅在 `webhook_router.py` 内使用，不纳入 Protocol。
+
+```python
+class WebhookServiceProtocol(Protocol):
+    def broadcast(self, content: str) -> list[dict]: ...
+    def send_to_channel(self, channel: Any, content: str) -> dict: ...
+    def load_channels(self) -> list: ...
+    def get_auto_push(self) -> bool: ...
+```
+
+### 当前实现：`WebhookService`
+
+| 配置项 | 说明 |
+|---|---|
+| 支持平台 | 飞书、钉钉、企业微信、Telegram、ntfy |
+| 配置存储 | `data/webhook_config.json` (文件 JSON) |
+| 消息截断 | 各平台独立限制（飞书 30K、钉钉 20K、企微/TG/ntfy 4K） |
+| 生命周期 | `ConfigManager` 缓存单例，通过 `create_webhook_service()` 工厂函数创建 |

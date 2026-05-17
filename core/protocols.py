@@ -299,3 +299,20 @@ class MemoryStoreProtocol(Protocol):
     ) -> PersistentMemory: ...
 
     def delete_persistent_memory(self, memory_id: str) -> None: ...
+
+
+@runtime_checkable
+class WebhookServiceProtocol(Protocol):
+    """Webhook 推送服务协议 — 仅定义推送核心能力。
+
+    CRUD 方法（add_channel/update_channel/delete_channel/test_channel）
+    仅在 webhook_router 中使用，属于 Delivery 层细节，不纳入 Protocol。
+    """
+
+    def broadcast(self, content: str) -> list[dict]: ...
+
+    def send_to_channel(self, channel: Any, content: str) -> dict: ...
+
+    def load_channels(self) -> list: ...
+
+    def get_auto_push(self) -> bool: ...

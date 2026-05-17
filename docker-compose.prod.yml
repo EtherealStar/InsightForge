@@ -1,0 +1,141 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: logos
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d logos"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    restart: "no"
+    env_file:
+      - ${LOGOS_ENV_FILE:-.env}
+    volumes:
+      - ./${LOGOS_ENV_FILE:-.env}:/app/.env
+      - logos_data:/app/data
+      - logos_output:/app/output
+    command: ["python", "migrations/apply_migrations.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - ${LOGOS_ENV_FILE:-.env}
+    volumes:
+      - ./${LOGOS_ENV_FILE:-.env}:/app/.env
+      - logos_data:/app/data
+      - logos_output:/app/output
+    command: ["python", "-m", "delivery.server"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8005/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - ${LOGOS_ENV_FILE:-.env}
+    volumes:
+      - ./${LOGOS_ENV_FILE:-.env}:/app/.env
+      - logos_data:/app/data
+      - logos_output:/app/output
+    command: ["celery", "-A", "scheduler.celery_app", "worker", "-l", "info", "-P", "threads"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  beat:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - ${LOGOS_ENV_FILE:-.env}
+    volumes:
+      - ./${LOGOS_ENV_FILE:-.env}:/app/.env
+      - logos_data:/app/data
+      - logos_output:/app/output
+      - celerybeat_data:/app/celerybeat
+    command: ["celery", "-A", "scheduler.celery_app", "beat", "-l", "info", "--schedule", "/app/celerybeat/celerybeat-schedule"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      CADDY_DOMAIN: ${CADDY_DOMAIN:?Set CADDY_DOMAIN in .env}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:?Set BASIC_AUTH_USER in .env}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?Set BASIC_AUTH_HASH in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+
+  flower:
+    build: .
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    env_file:
+      - ${LOGOS_ENV_FILE:-.env}
+    command: ["celery", "-A", "scheduler.celery_app", "flower", "--port=5555"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  redis_data:
+  logos_data:
+  logos_output:
+  celerybeat_data:
+  caddy_data:
+  caddy_config:

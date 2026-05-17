@@ -1,4 +1,4 @@
-﻿import structlog
+import structlog
 import time
 from datetime import datetime
 import redis
@@ -119,8 +119,7 @@ def run_daily_brief_task(self, manual=False):
     logger.info(f"日报已生成：{brief.generated_at}")
 
     try:
-        from services.webhook_service import WebhookService
-        webhook_service = WebhookService()
+        webhook_service = mgr.webhook_service
         if webhook_service.get_auto_push():
             push_results = webhook_service.broadcast(brief.content_markdown)
             push_ok = sum(1 for res in push_results if res["status"] == "ok")

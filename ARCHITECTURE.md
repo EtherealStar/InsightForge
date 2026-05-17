@@ -1,4 +1,4 @@
-﻿# Logos 架构文档
+# Logos 架构文档
 
 > **项目阶段**：Demo+ （前后端分离架构 + ReAct Agent + 深度研究 + Web 搜索 + AI 摘要 + Rerank + 混合检索 RAG + Webhook 推送）
 
@@ -12,6 +12,7 @@
 | 2026-05 | 混合检索 + RRF | 向量+关键词双通道 + jieba 中文分词 + Reciprocal Rank Fusion |
 | 2026-05 | 父子分块 RAG | Markdown 感知分块，子 chunk→pgvector 检索，父 chunk→PostgreSQL 召回 |
 | 2026-05 | 基础设施迁移 | SQLite→PostgreSQL, APScheduler→Celery+Redis, Docker Compose |
+| 2026-05 | VPS 一键部署 | 新增应用镜像、生产 Compose、Caddy Basic Auth 与初始化迁移 |
 
 → 完整变更历史：[docs/design-docs/changelog.md](docs/design-docs/changelog.md)
 
@@ -186,7 +187,10 @@ Logos/
 ├── tests/                          # 测试
 ├── data/                           # 运行时数据 (.gitignore)
 ├── output/                         # 日报 + 研究报告
-├── docker-compose.yml              # 基础设施容器编排
+├── Dockerfile                      # 应用镜像（Vue 构建 + Python 运行时）
+├── docker-compose.yml              # 本地基础设施容器编排
+├── docker-compose.prod.yml         # VPS 生产编排
+├── Caddyfile                       # 生产反向代理 + Basic Auth
 ├── ARCHITECTURE.md                 # 本文档
 └── AGENTS.md                       # AI 编码助手上下文
 ```
@@ -195,7 +199,7 @@ Logos/
 
 ## 5. 核心接口契约 (Protocol)
 
-系统通过 `typing.Protocol` 定义接口，实现基础设施层的可替换性：
+系统通过 `typing.Protocol` 定义接口，实现基础设施层与服务层的可替换性：
 
 | Protocol | 核心方法 | 当前实现 |
 |---|---|---|
@@ -206,6 +210,7 @@ Logos/
 | `RerankClientProtocol` | `rerank` | `OpenAICompatibleRerankClient` |
 | `AgentSessionStoreProtocol` | `create_general_session`, `create_session`, `append_event`, `append_message`, `update_summary` | `AgentSessionStore` |
 | `MemoryStoreProtocol` | `get_active_core_memories`, `list_memory_index`, `create_persistent_memory` | `MemoryStore` |
+| `WebhookServiceProtocol` | `broadcast`, `send_to_channel`, `load_channels`, `get_auto_push` | `WebhookService` |
 
 → 完整接口设计与实现说明：[docs/design-docs/protocol-contracts.md](docs/design-docs/protocol-contracts.md)
 
@@ -352,7 +357,7 @@ NewsAssistantError (基础异常)
 ## 10. 进程模型
 
 ```
-=== 基础设施层 (docker compose up -d) ===
+=== 本地开发基础设施层 (docker compose up -d) ===
   容器 1: logos-postgres  (:5432)  — 文章 + 父/子 chunk + 向量 + 全文索引
   容器 2: logos-redis     (:6379)  — Celery Broker
 
@@ -365,6 +370,23 @@ NewsAssistantError (基础异常)
 
 进程间数据共享：PostgreSQL + 文件系统。
 
+生产部署使用 `docker-compose.prod.yml`：
+
+```
+公网 80/443
+  → caddy (Basic Auth + reverse proxy)
+  → web    (FastAPI + Vue 静态资源, :8005)
+
+migrate  一次性初始化 PostgreSQL schema + migrations/*.sql
+worker   Celery Worker 执行 Pipeline / Brief / Cleanup
+beat     Celery Beat 定时投递任务
+postgres PostgreSQL 16 + pgvector
+redis    Celery Broker / Result Backend
+flower   可选 monitoring profile
+```
+
+生产环境只发布 Caddy 端口；PostgreSQL、Redis、Web、Worker、Beat 默认不直接暴露到公网。`.env` 作为共享绑定文件挂载到 `/app/.env`，`data/` 和 `output/` 使用 Docker Named Volumes 持久化。
+
 ---
 
 ## 11. 依赖注入
@@ -372,16 +394,25 @@ NewsAssistantError (基础异常)
 系统使用**工厂函数**（`core/factory.py`）+ **ConfigManager 单例**：
 
 ```python
-# 8 个工厂函数
-create_article_store(config)     → PostgresArticleStore
-create_vector_store(config)      → PgVectorStore
-create_llm_client(config)        → LLMClient (按 provider 选择)
-create_embedding_client(config)  → OpenAICompatibleEmbeddingClient
-create_rerank_client(config)     → RerankClient | None
-create_summary_llm_client(config)→ LLMClient (可复用主 LLM)
-create_chunking_service(config)  → ChunkingService
+# 基础设施层工厂函数 (8 个)
+create_article_store(config)      → PostgresArticleStore
+create_agent_session_store(config) → AgentSessionStore
+create_memory_store(config)       → MemoryStore
+create_vector_store(config)       → PgVectorStore
+create_llm_client(config)         → LLMClient (按 provider 选择)
+create_embedding_client(config)   → OpenAICompatibleEmbeddingClient
+create_rerank_client(config)      → RerankClient | None
+create_summary_llm_client(config) → LLMClient (可复用主 LLM)
+create_chunking_service(config)   → ChunkingService
 
-# ConfigManager 缓存实例，reload() 支持热重载
+# Service 层工厂函数 (4 个)
+create_webhook_service()          → WebhookService
+create_deep_research_service()    → DeepResearchService
+create_query_service(config, mgr) → QueryService (含 MemoryService)
+create_memory_service(mgr)        → MemoryService
+
+# ConfigManager 缓存全部实例，reload() 支持热重载
+# Service 层使用懒加载，依赖的基础设施变更时自动清空缓存
 ```
 
 → Agent 智能体层详细设计：[docs/design-docs/react-agent.md](docs/design-docs/react-agent.md)
@@ -430,3 +461,13 @@ python -m delivery.cli pipeline
 python -m delivery.cli ask "今天有什么重要新闻？"
 python -m delivery.cli stats
 ```
+
+### 13.1 VPS 生产部署
+
+```bash
+cp .env.deploy.example .env
+# 编辑 .env，至少设置 CADDY_DOMAIN、BASIC_AUTH_USER、BASIC_AUTH_HASH、POSTGRES_PASSWORD、PG_DSN 和各类 API Key
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+详细部署、备份、升级和清空重建步骤见 [docs/deployment/docker-vps.md](docs/deployment/docker-vps.md)。

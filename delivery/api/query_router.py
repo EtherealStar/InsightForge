@@ -17,22 +17,10 @@ class QueryRequest(BaseModel):
 
 
 def _get_query_service():
-    """从 ConfigManager 获取组件并构建 QueryService"""
+    """从 ConfigManager 获取缓存的 QueryService 单例"""
     from core.config_manager import get_config_manager
-    from services.query_service import QueryService
-    from services.memory_service import MemoryService
 
-    mgr = get_config_manager()
-    return QueryService(
-        mgr.article_store, mgr.vector_store,
-        mgr.llm_client, mgr.embedding_client,
-        session_store=mgr.agent_session_store,
-        memory_service=MemoryService(
-            mgr.memory_store,
-            mgr.agent_session_store,
-            mgr.llm_client,
-        ),
-    )
+    return get_config_manager().query_service
 
 
 def _get_session_store():

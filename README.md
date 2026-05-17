@@ -76,6 +76,18 @@ python -m delivery.server
 
 浏览器访问 **http://localhost:8005**
 
+#### 方式 D：VPS Docker Compose 一键部署
+
+```bash
+cp .env.deploy.example .env
+# 编辑 .env：填写 CADDY_DOMAIN、BASIC_AUTH_USER、BASIC_AUTH_HASH、POSTGRES_PASSWORD 和各类 API Key
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+生产编排会启动 PostgreSQL/pgvector、Redis、一次性数据库初始化、FastAPI、Celery Worker、Celery Beat 和 Caddy。公网只暴露 Caddy 的 80/443，站点默认启用 Basic Auth。
+
+详细步骤见 [docs/deployment/docker-vps.md](docs/deployment/docker-vps.md)。
+
 ### 4. CLI 调试工具
 
 ```bash
@@ -128,11 +140,12 @@ Logos/
 - **检索**: 向量+关键词 RRF 混合检索 + jieba 中文分词
 - **任务**: Celery + Redis (分布式异步 + Beat 定时)
 - **日志**: structlog (结构化 JSON)
-- **容器**: Docker Compose (PostgreSQL/pgvector + Redis)
+- **容器**: Docker Compose (VPS 生产编排 + 本地基础设施)
 - **包管理**: pnpm（前端）/ pip（后端）
 
 ## 文档
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 架构全景
+- [docs/deployment/docker-vps.md](docs/deployment/docker-vps.md) — VPS Docker Compose 部署
 - [AGENTS.md](AGENTS.md) — AI 编码助手上下文
 - [docs/](docs/) — 详细文档目录

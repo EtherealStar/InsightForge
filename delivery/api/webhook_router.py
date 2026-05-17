@@ -4,14 +4,15 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
-from services.webhook_service import WebhookService, SUPPORTED_PLATFORMS
+from services.webhook_service import SUPPORTED_PLATFORMS
 
 router = APIRouter(prefix="/api/webhook", tags=["webhook"])
 logger = structlog.get_logger(__name__)
 
 
-def _get_service() -> WebhookService:
-    return WebhookService()
+def _get_service():
+    from core.config_manager import get_config_manager
+    return get_config_manager().webhook_service
 
 
 def _mask_url(url: str) -> str:
