@@ -16,8 +16,6 @@
 
 | 事项 | 说明 | 优先级 |
 |---|---|---|
-| Celery 重试补偿机制 | 强化 Pipeline/日报任务容错 | P1 |
-| RSS 并发抓取 | ThreadPoolExecutor 并发化 | P1 |
 | 多环境 .env 配置 | dev/prod 环境隔离 | P2 |
 | 认证/授权中间件 | API 安全保护 | P2 |
 
@@ -33,6 +31,9 @@
 
 | 事项 | 说明 |
 |---|---|
+| Pipeline 前端异步轮询 | `/api/news/pipeline` 返回 `task_id` 后由前端轮询 `/api/tasks/{task_id}`，修复旧同步结果解包错误 |
+| 抓取流程改进 | RSS 源 ThreadPoolExecutor 并发抓取、Celery 任务自动重试、爬虫 per-site `max_pages` 参数化 |
+| RAGAs 评估框架 | 三维度评估（检索+问答+Agent），`evals/` 模块 + CLI + 合成测试集生成 |
 | VPS Docker Compose 部署 | 应用镜像 + Web/Worker/Beat/Migrate/Caddy 编排，见 `docs/deployment/docker-vps.md` |
 
 ---

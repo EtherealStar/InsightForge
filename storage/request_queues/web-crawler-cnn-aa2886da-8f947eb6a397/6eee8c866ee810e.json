@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://edition.cnn.com/2026/05/16/americas/raul-castro-cuba-profile-power-intl-latam",
+  "url": "https://edition.cnn.com/2026/05/16/americas/raul-castro-cuba-profile-power-intl-latam",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

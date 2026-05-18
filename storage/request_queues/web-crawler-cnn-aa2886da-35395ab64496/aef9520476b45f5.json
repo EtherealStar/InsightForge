@@ -1,0 +1,18 @@
+{
+  "unique_key": "https://edition.cnn.com/world/middleeast/israel",
+  "url": "https://edition.cnn.com/world/middleeast/israel",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "state": 4,
+      "crawlDepth": 1
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": "2026-05-18 17:44:37.002254+00:00"
+}

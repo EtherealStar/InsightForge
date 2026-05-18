@@ -1,14 +1,9 @@
 """功能设置 API"""
-import json
-import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from core.source_config import load_feeds, save_feeds, load_sites, save_sites
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-
-_DATA_DIR = os.path.join(os.getcwd(), "data")
-_FEEDS_CONFIG_PATH = os.path.join(_DATA_DIR, "feeds_config.json")
-_SITES_CONFIG_PATH = os.path.join(_DATA_DIR, "sites_config.json")
 
 
 class FeedItem(BaseModel):
@@ -33,66 +28,34 @@ class ScheduleConfig(BaseModel):
     article_retention_days: int = 90
 
 
-def _load_feeds() -> list[dict]:
-    """加载 RSS 源列表"""
-    if os.path.exists(_FEEDS_CONFIG_PATH):
-        with open(_FEEDS_CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    from core.config_manager import get_config_manager
-    config = get_config_manager().config
-    return list(config.rss_feeds)
-
-
-def _save_feeds(feeds: list[dict]):
-    """保存 RSS 源列表"""
-    os.makedirs(os.path.dirname(_FEEDS_CONFIG_PATH), exist_ok=True)
-    with open(_FEEDS_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(feeds, f, ensure_ascii=False, indent=2)
-
-
-def _load_sites() -> list[dict]:
-    """加载网页爬取源列表"""
-    if os.path.exists(_SITES_CONFIG_PATH):
-        with open(_SITES_CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
-
-
-def _save_sites(sites: list[dict]):
-    """保存网页爬取源列表"""
-    os.makedirs(os.path.dirname(_SITES_CONFIG_PATH), exist_ok=True)
-    with open(_SITES_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(sites, f, ensure_ascii=False, indent=2)
-
-
 @router.get("/feeds")
 def get_feeds():
     """获取 RSS 源列表"""
-    feeds = _load_feeds()
+    feeds = load_feeds()
     return {"feeds": [{"id": i, **feed} for i, feed in enumerate(feeds)]}
 
 
 @router.post("/feeds")
 def add_feed(feed: FeedItem):
     """添加 RSS 源"""
-    feeds = _load_feeds()
+    feeds = load_feeds()
     # 检查重复
     for existing in feeds:
         if existing["url"] == feed.url:
             raise HTTPException(status_code=400, detail="该 RSS 源已存在")
     feeds.append({"name": feed.name, "url": feed.url})
-    _save_feeds(feeds)
+    save_feeds(feeds)
     return {"status": "ok", "message": f"已添加: {feed.name}"}
 
 
 @router.delete("/feeds/{feed_id}")
 def delete_feed(feed_id: int):
     """删除 RSS 源"""
-    feeds = _load_feeds()
+    feeds = load_feeds()
     if feed_id < 0 or feed_id >= len(feeds):
         raise HTTPException(status_code=404, detail="未找到该 RSS 源")
     removed = feeds.pop(feed_id)
-    _save_feeds(feeds)
+    save_feeds(feeds)
     return {"status": "ok", "message": f"已删除: {removed['name']}"}
 
 
@@ -140,14 +103,14 @@ def update_schedule(schedule: ScheduleConfig):
 @router.get("/sites")
 def get_sites():
     """获取网页爬取源列表"""
-    sites = _load_sites()
+    sites = load_sites()
     return {"sites": [{"id": i, **site} for i, site in enumerate(sites)]}
 
 
 @router.post("/sites")
 def add_site(site: SiteItem):
     """添加网页爬取源"""
-    sites = _load_sites()
+    sites = load_sites()
     for existing in sites:
         if existing["url"] == site.url:
             raise HTTPException(status_code=400, detail="该爬取源已存在")
@@ -157,14 +120,14 @@ def add_site(site: SiteItem):
         "max_pages": site.max_pages,
         "link_selector": site.link_selector or "",
     })
-    _save_sites(sites)
+    save_sites(sites)
     return {"status": "ok", "message": f"已添加: {site.name}"}
 
 
 @router.put("/sites/{site_id}")
 def update_site(site_id: int, site: SiteItem):
     """更新网页爬取源"""
-    sites = _load_sites()
+    sites = load_sites()
     if site_id < 0 or site_id >= len(sites):
         raise HTTPException(status_code=404, detail="未找到该爬取源")
     sites[site_id] = {
@@ -173,16 +136,16 @@ def update_site(site_id: int, site: SiteItem):
         "max_pages": site.max_pages,
         "link_selector": site.link_selector or "",
     }
-    _save_sites(sites)
+    save_sites(sites)
     return {"status": "ok", "message": f"已更新: {site.name}"}
 
 
 @router.delete("/sites/{site_id}")
 def delete_site(site_id: int):
     """删除网页爬取源"""
-    sites = _load_sites()
+    sites = load_sites()
     if site_id < 0 or site_id >= len(sites):
         raise HTTPException(status_code=404, detail="未找到该爬取源")
     removed = sites.pop(site_id)
-    _save_sites(sites)
+    save_sites(sites)
     return {"status": "ok", "message": f"已删除: {removed['name']}"}

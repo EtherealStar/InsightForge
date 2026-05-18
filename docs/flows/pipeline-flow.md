@@ -16,7 +16,7 @@ Pipeline 由 Celery Beat 定时触发（每 5 分钟检查一次），通过 Red
 \
 也可通过 CLI 或 API 手动触发：
 - CLI: python -m delivery.cli pipeline
-- API: POST /api/tasks/pipeline
+- API: POST /api/news/pipeline 返回 task_id，前端再轮询 GET /api/tasks/{task_id}
 
 手动触发绕过频率门控，强制执行。
 
@@ -79,7 +79,8 @@ sequenceDiagram
 
 **RSS 抓取** — NewsCollector.fetch_all()
 - 读取 data/feeds_config.json 中的 RSS 源列表
-- 使用 eedparser 解析每个 RSS/Atom feed
+- 使用 ThreadPoolExecutor 并发抓取多个 RSS 源
+- 使用 feedparser 解析每个 RSS/Atom feed
 - 提取标题、链接、发布时间、作者、摘要
 - 语言检测：按 source 配置的 language 字段标记
 
@@ -90,6 +91,7 @@ sequenceDiagram
 - 单页面超时 + 错误隔离（单源失败不影响其他源）
 
 **错误处理**：RSS 和爬虫各自独立 try/except，一个源失败不会终止整个采集阶段。
+Celery 任务本身启用 autoretry/backoff；任务级异常会自动重试，单源失败则记录并继续。
 
 ### 阶段 2: Markdown 转换 (NewsMarkdownConverter)
 

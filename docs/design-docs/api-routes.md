@@ -20,7 +20,7 @@
 | GET | `/api/news/stats` | 数据库统计 |
 | GET | `/api/news/sources` | 所有新闻来源 |
 | GET | `/api/news/{id}` | 单篇新闻全文 |
-| POST | `/api/news/pipeline` | 手动触发 Pipeline (异步返回 task_id) |
+| POST | `/api/news/pipeline` | 手动触发 Pipeline（异步返回 `task_id`，通过 `/api/tasks/{task_id}` 查询结果） |
 | POST | `/api/news/batch-delete` | 批量删除文章（含向量记录） |
 
 ### 简报

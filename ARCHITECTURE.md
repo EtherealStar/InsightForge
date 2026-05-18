@@ -8,6 +8,8 @@
 
 | 时间 | 变更 | 摘要 |
 |---|---|---|
+| 2026-05 | Pipeline 抓取与任务反馈修复 | 前端异步任务轮询、RSS 并发抓取、Celery 自动重试 |
+| 2026-05 | RAGAs 评估框架 | 三维度评估（检索质量 + 端到端问答 + Agent 工具调用），LLM-as-Judge |
 | 2026-05 | pgvector 统一存储 | 移除 Qdrant，子 chunk 向量并入 PostgreSQL |
 | 2026-05 | 混合检索 + RRF | 向量+关键词双通道 + jieba 中文分词 + Reciprocal Rank Fusion |
 | 2026-05 | 父子分块 RAG | Markdown 感知分块，子 chunk→pgvector 检索，父 chunk→PostgreSQL 召回 |
@@ -29,6 +31,7 @@ Logos 是一个**个人 AI 新闻分析助手**，具备以下核心能力：
 5. **NewsAPI 在线搜索**：代理 NewsAPI 接口，支持全球新闻搜索和热门头条
 6. **Webhook 推送**：将新闻简报/研究报告通过 Webhook 推送到飞书、钉钉、企业微信、Telegram、ntfy 等平台
 7. **Agent 工具系统**：完整的工具定义、注册、编排、执行基础设施 + 6 个内置工具 + ReAct 推理-行动循环核心
+8. **RAGAs 评估**：基于 RAGAs 框架的三维度自动化评估（检索质量、端到端问答质量、Agent 工具调用准确性），支持自定义 OpenAI 兼容评判 LLM
 
 当前系统为**前后端分离架构**（Vue 3 + FastAPI）。
 
@@ -47,6 +50,7 @@ Logos 是一个**个人 AI 新闻分析助手**，具备以下核心能力：
 | LLM | openai/gemini/anthropic SDK | 4 种后端统一 Protocol |
 | 检索 | HybridSearchService + RRF | 向量+关键词双通道融合 |
 | 分块 | tiktoken + ChunkingService | Markdown 感知的父子分块 |
+| 评估 | RAGAs + LLM-as-Judge | 三维度 RAG 质量自动化评估 |
 | 日志 | structlog | 结构化 JSON + request_id 追踪 |
 
 → 完整选型论证与 ADR：[docs/design-docs/tech-decisions.md](docs/design-docs/tech-decisions.md)
@@ -184,6 +188,16 @@ Logos/
 │   ├── DESIGN.md                   # 设计哲学概述
 │   └── PLANS.md                    # 开发路线图
 │
+├── evals/                          # RAGAs 评估模块
+│   ├── config.py                  # 评判 LLM 配置加载
+│   ├── adapters.py                # Logos 数据 → RAGAs Sample 转换
+│   ├── metrics.py                 # 三维度指标预设
+│   ├── runner.py                  # LogosEvalRunner 评估编排
+│   ├── eval_config.json           # 评判 LLM 配置（OpenAI 兼容）
+│   ├── datasets/                  # 评估数据集（黄金 QA + 合成）
+│   ├── results/                   # 评估结果输出
+│   └── scripts/                   # CLI: run_eval.py + generate_testset.py
+│
 ├── tests/                          # 测试
 ├── data/                           # 运行时数据 (.gitignore)
 ├── output/                         # 日报 + 研究报告
@@ -222,7 +236,7 @@ Logos/
 
 ```
 数据源 (RSS + 网页爬虫)
-    → NewsCollector.fetch_all() + WebCrawler.crawl_all()
+    → NewsCollector.fetch_all() 并发 RSS 抓取 + WebCrawler.crawl_all()
     → NewsMarkdownConverter.convert_batch()     HTML→Markdown
     → PostgresArticleStore.save_articles()      SHA256 去重
     → SummaryService.summarize_pending()        LLM 摘要+标签
@@ -323,8 +337,8 @@ Chunk (N)   ──→ (1) ParentChunk (通过 parent_chunk_id)
 | 配置项 | 存储位置 | 管理方式 |
 |---|---|---|
 | LLM/Embedding/Rerank API | `.env` | 前端 ConfigView 通过 API 读写 |
-| RSS 源列表 | `data/feeds_config.json` | 前端 SettingsView |
-| 爬虫源列表 | `data/sites_config.json` | 前端 SettingsView |
+| RSS 源列表 | `data/feeds_config.json` | `core/source_config.py` 读写，前端 SettingsView 管理 |
+| 爬虫源列表 | `data/sites_config.json` | `core/source_config.py` 读写，前端 SettingsView 管理 |
 | 推送渠道 | `data/webhook_config.json` | 前端 WebhookView |
 | 应用默认值 | `core/config.py` | pydantic Field default |
 
@@ -423,8 +437,6 @@ create_memory_service(mgr)        → MemoryService
 
 | 局限 | 影响 | 改进方向 |
 |---|---|---|
-| 无 Celery 重试补偿 | 任务失败无自动恢复 | Celery Task Retries |
-| RSS 串行抓取 | 源多时抓取慢 | ThreadPoolExecutor 并发 |
 | 单环境 .env | 无 dev/prod 区分 | 多环境 .env |
 | 无认证/授权 | API 完全开放 | 认证中间件 |
 | structlog 已引入但部分模块待迁移 | 日志格式不统一 | 全局迁移 |
@@ -471,3 +483,63 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 详细部署、备份、升级和清空重建步骤见 [docs/deployment/docker-vps.md](docs/deployment/docker-vps.md)。
+
+---
+
+## 14. RAGAs 评估框架
+
+系统集成了 [RAGAs](https://docs.ragas.io/) 框架，对 AI 能力进行三维度自动化评估，采用 LLM-as-Judge 原理：
+
+### 14.1 评估维度
+
+| 维度 | 评估对象 | 核心指标 | 数据模型 |
+|---|---|---|---|
+| ① 检索质量 | `HybridSearchService` | Context Precision, Context Recall, Noise Sensitivity | `SingleTurnSample` |
+| ② 端到端问答 | `QueryService` → `ReActAgent` | Faithfulness, Response Relevancy | `SingleTurnSample` |
+| ③ Agent 工具调用 | `ReActAgent` 多步推理 | ToolCallAccuracy, AgentGoalAccuracy | `MultiTurnSample` |
+
+### 14.2 评估数据流
+
+```
+黄金数据集 (golden_qa.json)
+    ↓ 对每个 question
+    ├── HybridSearchService.search()     → retrieved_contexts
+    └── QueryService.answer_agent()      → response + AgentEvent[]
+    ↓ adapters.py 转换
+    ├── SingleTurnSample (维度 ①②)
+    └── MultiTurnSample  (维度 ③)
+    ↓ ragas.evaluate()
+    → 评估报告 JSON (evals/results/)
+```
+
+### 14.3 评判 LLM 配置
+
+通过 `evals/eval_config.json` 配置评判 LLM，支持 OpenAI 兼容的自定义端点：
+
+```json
+{
+  "judge_llm": {
+    "model": "gpt-4o-mini",
+    "base_url": "https://api.openai.com/v1",
+    "api_key_env": "OPENAI_API_KEY"
+  }
+}
+```
+
+### 14.4 使用方式
+
+```bash
+# 安装评估依赖（独立于生产依赖）
+pip install -r requirements-eval.txt
+
+# 运行全量评估
+python -m evals.scripts.run_eval --suite all
+
+# 单维度评估
+python -m evals.scripts.run_eval --suite retrieval
+python -m evals.scripts.run_eval --suite e2e
+python -m evals.scripts.run_eval --suite agent
+
+# 从知识库文章生成合成测试集
+python -m evals.scripts.generate_testset --count 50 --size 30
+```

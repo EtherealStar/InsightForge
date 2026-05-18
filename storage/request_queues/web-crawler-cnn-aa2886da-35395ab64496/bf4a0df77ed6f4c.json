@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://edition.cnn.com/2024/03/21/climate/wildfire-grass-risk-west-us",
+  "url": "https://edition.cnn.com/2024/03/21/climate/wildfire-grass-risk-west-us",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

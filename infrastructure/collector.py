@@ -2,6 +2,7 @@
 import structlog
 from datetime import datetime
 import calendar
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import feedparser
 import trafilatura
@@ -17,25 +18,45 @@ logger = structlog.get_logger(__name__)
 class NewsCollector:
     """从 RSS 源抓取新闻文章"""
 
+    MAX_WORKERS = 8
+
     def __init__(self, config: AppConfig):
         self.config = config
 
     def fetch_all(self) -> list[Article]:
         """
         从所有 RSS 源抓取文章。
-        每个源独立 try/except，单源失败不影响整体。
+        多个源并发抓取；每个源独立 try/except，单源失败不影响整体。
         每源最多返回 config.max_articles_per_fetch 条。
         """
         all_articles: list[Article] = []
-        for feed_info in self.config.rss_feeds:
-            name = feed_info["name"]
-            url = feed_info["url"]
-            try:
-                articles = self.fetch_source(name, url)
-                all_articles.extend(articles)
-                logger.info(f" {name}: 抓取到 {len(articles)} 篇文章")
-            except Exception as e:
-                logger.error(f" {name}: 抓取失败 — {e}")
+        feeds = list(self.config.rss_feeds)
+        if not feeds:
+            logger.info("未配置 RSS 源")
+            return all_articles
+
+        max_workers = min(len(feeds), self.MAX_WORKERS)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_feed = {
+                executor.submit(
+                    self.fetch_source,
+                    feed_info.get("name", "unknown"),
+                    feed_info.get("url", ""),
+                ): feed_info
+                for feed_info in feeds
+                if feed_info.get("url")
+            }
+
+            for future in as_completed(future_to_feed):
+                feed_info = future_to_feed[future]
+                name = feed_info.get("name", "unknown")
+                try:
+                    articles = future.result()
+                    all_articles.extend(articles)
+                    logger.info(f" {name}: 抓取到 {len(articles)} 篇文章")
+                except Exception as e:
+                    logger.error(f" {name}: 抓取失败 — {e}")
+
         logger.info(f"总计抓取 {len(all_articles)} 篇文章")
         return all_articles
 

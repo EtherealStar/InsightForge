@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://www.bbc.com/travel/article/20260427-zambia-is-the-worlds-walking-safari-capital",
+  "url": "https://www.bbc.com/travel/article/20260427-zambia-is-the-worlds-walking-safari-capital",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

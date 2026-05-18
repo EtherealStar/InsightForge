@@ -7,7 +7,7 @@
   "user_data": {
     "__crawlee": {
       "enqueueStrategy": "same-domain",
-      "crawlDepth": 1
+      "crawlDepth": 2
     }
   },
   "retry_count": 0,

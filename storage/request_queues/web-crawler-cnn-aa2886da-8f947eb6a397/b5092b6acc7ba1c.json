@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://edition.cnn.com/2026/01/19/politics/iowa-voters-2026-elections-trump-first-year-aotm",
+  "url": "https://edition.cnn.com/2026/01/19/politics/iowa-voters-2026-elections-trump-first-year-aotm",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

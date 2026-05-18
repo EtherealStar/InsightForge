@@ -1,10 +1,10 @@
 import structlog
-import time
 from datetime import datetime
 import redis
 from celery import shared_task
 
 from core.config_manager import get_config_manager
+from core.source_config import load_feeds, load_sites
 from infrastructure.collector import NewsCollector
 from services.pipeline_service import PipelineService
 from services.brief_service import BriefService
@@ -15,7 +15,13 @@ def get_redis_client():
     config = get_config_manager().config
     return redis.Redis.from_url(config.celery_broker_url, decode_responses=True)
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_jitter=True,
+)
 def run_pipeline_task(self, manual=False):
     """
     执行抓取 → 存储 → AI 摘要 → 向量化
@@ -41,13 +47,12 @@ def run_pipeline_task(self, manual=False):
 
     logger.info("=== Pipeline 开始 ===")
     
-    from delivery.api.settings_router import _load_feeds, _load_sites
     from services.summary_service import SummaryService
     
-    config.rss_feeds = _load_feeds()
+    config.rss_feeds = load_feeds()
     collector = NewsCollector(config)
     
-    crawl_sites = _load_sites()
+    crawl_sites = load_sites()
     web_crawler = None
     if crawl_sites:
         from infrastructure.web_crawler import WebCrawler
@@ -75,7 +80,13 @@ def run_pipeline_task(self, manual=False):
     logger.info(f"Pipeline 完成: {result}")
     return result
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_jitter=True,
+)
 def run_daily_brief_task(self, manual=False):
     """
     执行日报生成并推送。
@@ -129,8 +140,14 @@ def run_daily_brief_task(self, manual=False):
         
     return {"generated_at": brief.generated_at, "status": "success"}
 
-@shared_task
-def run_cleanup_task():
+@shared_task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_jitter=True,
+)
+def run_cleanup_task(self):
     """定期清理过期的文章。由 Celery Beat 按照 crontab(weekly) 调用"""
     mgr = get_config_manager()
     mgr.reload()

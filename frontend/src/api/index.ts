@@ -8,6 +8,38 @@ const api: AxiosInstance = axios.create({
   },
 })
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// ========== 异步任务 ==========
+export const tasksApi = {
+  getStatus: (taskId: string) => api.get(`/tasks/${taskId}`),
+}
+
+export async function waitForTask(
+  taskId: string,
+  options: { intervalMs?: number; timeoutMs?: number } = {},
+) {
+  const intervalMs = options.intervalMs ?? 2000
+  const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const res = await tasksApi.getStatus(taskId)
+    const data = res.data
+
+    if (data.ready || data.status === 'SUCCESS' || data.status === 'FAILURE') {
+      if (data.status === 'FAILURE') {
+        throw new Error(data.error || '任务执行失败')
+      }
+      return data.result
+    }
+
+    await sleep(intervalMs)
+  }
+
+  throw new Error('任务执行超时，请稍后查看结果')
+}
+
 // ========== 配置 ==========
 export const configApi = {
   get: () => api.get('/config'),

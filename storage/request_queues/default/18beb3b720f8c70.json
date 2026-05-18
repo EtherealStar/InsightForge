@@ -7,11 +7,12 @@
   "user_data": {
     "__crawlee": {
       "enqueueStrategy": "same-domain",
+      "state": 4,
       "crawlDepth": 1
     }
   },
   "retry_count": 0,
   "no_retry": false,
   "loaded_url": null,
-  "handled_at": null
+  "handled_at": "2026-05-18 16:38:46.994474+00:00"
 }

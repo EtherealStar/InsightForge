@@ -1,17 +1,34 @@
 """基于 Crawlee 的网页新闻爬取器"""
 import asyncio
+import hashlib
+import re
 import structlog
+import uuid
 from datetime import datetime
 from urllib.parse import urlparse
 
 import trafilatura
 from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
 from crawlee import ConcurrencySettings
+from crawlee.statistics import Statistics
+from crawlee.storages import RequestQueue
 
 from models.article import Article, Language
 from core.exceptions import CollectorError
 
 logger = structlog.get_logger(__name__)
+
+
+def _build_storage_name(site_name: str, site_url: str) -> str:
+    """为单次爬取生成独立 Crawlee 存储名称，避免复用 default 队列。"""
+    slug = re.sub(r"[^a-z0-9]+", "-", site_name.lower()).strip("-")
+    if not slug:
+        slug = urlparse(site_url).netloc.lower() or "site"
+        slug = re.sub(r"[^a-z0-9]+", "-", slug).strip("-") or "site"
+
+    url_hash = hashlib.sha1(site_url.encode("utf-8")).hexdigest()[:8]
+    run_id = uuid.uuid4().hex[:12]
+    return f"web-crawler-{slug[:40]}-{url_hash}-{run_id}"
 
 
 class WebCrawler:
@@ -41,19 +58,30 @@ class WebCrawler:
         site_name: str,
         site_url: str,
         link_selector: str | None = None,
+        max_pages: int | None = None,
     ) -> list[Article]:
         """内部异步爬取方法"""
         articles: list[Article] = []
-        seed_domain = urlparse(site_url).netloc
+        storage_name = _build_storage_name(site_name, site_url)
+        page_limit = max_pages or self.max_pages
 
         concurrency = ConcurrencySettings(
             desired_concurrency=self.max_concurrency,
             max_concurrency=self.max_concurrency,
         )
 
+        request_queue = await RequestQueue.open(name=storage_name)
+
         crawler = BeautifulSoupCrawler(
-            max_requests_per_crawl=self.max_pages,
+            max_requests_per_crawl=page_limit,
             concurrency_settings=concurrency,
+            request_manager=request_queue,
+            statistics=Statistics.with_default_state(
+                persistence_enabled=True,
+                persist_state_kvs_name=storage_name,
+                persist_state_key="CRAWLER_STATISTICS",
+                statistics_log_format="inline",
+            ),
         )
 
         @crawler.router.default_handler
@@ -92,6 +120,9 @@ class WebCrawler:
             )
 
         try:
+            logger.info(
+                f"[WebCrawler] {site_name}: 使用独立存储 {storage_name}"
+            )
             await crawler.run([site_url])
         except Exception as e:
             logger.error(f"Crawlee 爬取 {site_name} ({site_url}) 失败: {e}")
@@ -105,6 +136,7 @@ class WebCrawler:
         site_name: str,
         site_url: str,
         link_selector: str | None = None,
+        max_pages: int | None = None,
     ) -> list[Article]:
         """
         同步入口：爬取指定网站并返回文章列表。
@@ -120,12 +152,12 @@ class WebCrawler:
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(
                     asyncio.run,
-                    self._crawl(site_name, site_url, link_selector),
+                    self._crawl(site_name, site_url, link_selector, max_pages),
                 )
                 return future.result()
         else:
             return asyncio.run(
-                self._crawl(site_name, site_url, link_selector)
+                self._crawl(site_name, site_url, link_selector, max_pages)
             )
 
     def crawl_all(self, sites: list[dict]) -> tuple[list[Article], list[str]]:
@@ -145,10 +177,7 @@ class WebCrawler:
             max_pages = site.get("max_pages", self.max_pages)
             link_selector = site.get("link_selector")
             try:
-                old_max = self.max_pages
-                self.max_pages = max_pages
-                articles = self.crawl_site(name, url, link_selector)
-                self.max_pages = old_max
+                articles = self.crawl_site(name, url, link_selector, max_pages)
                 all_articles.extend(articles)
                 logger.info(f" {name}: 爬取到 {len(articles)} 篇文章")
             except Exception as e:

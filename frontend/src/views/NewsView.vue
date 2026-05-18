@@ -149,7 +149,7 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
-import { newsApi } from '../api'
+import { newsApi, waitForTask } from '../api'
 import NewsCard from '../components/NewsCard.vue'
 import NewsDetail from '../components/NewsDetail.vue'
 
@@ -288,10 +288,24 @@ async function batchResummarize() {
 
 async function runPipeline() {
   pipelineLoading.value = true
-  showToast('正在执行新闻抓取...', 'info')
+  showToast('正在启动新闻抓取任务...', 'info')
   try {
     const res = await newsApi.runPipeline()
-    const r = res.data.result
+    const taskId = res.data.task_id
+    if (!taskId) {
+      throw new Error(res.data.message || '未返回任务 ID')
+    }
+
+    showToast('新闻抓取任务已开始，正在等待结果...', 'info')
+    const r = await waitForTask(taskId)
+    if (r === 'Skipped') {
+      showToast('抓取任务已跳过：尚未达到自动抓取间隔', 'info')
+      return
+    }
+    if (!r || typeof r !== 'object') {
+      throw new Error('任务完成但未返回有效结果')
+    }
+
     if (r.errors && r.errors.length > 0) {
       showToast(`抓取完成(带错误)！新增 ${r.new} 篇。错误: ${r.errors[0]}`, 'warning')
     } else {

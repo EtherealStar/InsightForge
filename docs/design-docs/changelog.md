@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-05 Pipeline 抓取与任务反馈修复
+
+- 修复前端仍按同步结果读取 `/api/news/pipeline` 的问题；现在前端拿到 `task_id` 后轮询 `/api/tasks/{task_id}`，避免 `undefined.errors` 报错。
+- `NewsCollector.fetch_all()` 改为 `ThreadPoolExecutor` 并发抓取 RSS 源，保留单源失败隔离。
+- RSS/网页爬取源配置读写抽到 `core/source_config.py`，Scheduler 不再导入 Delivery Router 私有函数。
+- `WebCrawler` 的 per-site `max_pages` 改为显式参数传递，不再临时修改实例状态。
+- Pipeline/日报/清理 Celery 任务启用 `autoretry_for`、backoff 与 jitter，提升任务级异常恢复能力。
+
+---
+
+## 2026-05 RAGAs 评估框架
+
+引入 [RAGAs](https://docs.ragas.io/) 框架，建立三维度自动化评估体系：
+
+### 8. RAGAs 评估框架 (无评估 → 三维度 LLM-as-Judge)
+
+- 新增 `evals/` 独立评估模块，依赖通过 `requirements-eval.txt` 隔离，不影响生产镜像。
+- 实现三个评估维度：① 检索质量（Context Precision / Recall）、② 端到端问答（Faithfulness / Response Relevancy）、③ Agent 工具调用（ToolCallAccuracy / AgentGoalAccuracy）。
+- `evals/adapters.py` 将 Logos 的 `HybridSearchResult` / `AgentEvent` / `AgentResult` 转换为 RAGAs 的 `SingleTurnSample` / `MultiTurnSample`，解耦内部数据结构与评估框架。
+- `evals/eval_config.json` 支持 OpenAI 兼容的自定义评判 LLM 端点配置。
+- `evals/runner.py` 编排完整流程：加载黄金数据集 → 调用 Logos 组件采集系统输出 → 适配 → 评估 → 保存结果。
+- 提供 CLI 入口 `python -m evals.scripts.run_eval` 和合成测试集生成脚本 `python -m evals.scripts.generate_testset`。
+
+---
+
 ## 2026-05 架构升级
 
 本项目在 2026 年 5 月进行了底层核心基础设施的迁移与升级。

@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://edition.cnn.com/2025/11/11/sport/video/cristiano-ronaldo-world-cup-retire-vrtc",
+  "url": "https://edition.cnn.com/2025/11/11/sport/video/cristiano-ronaldo-world-cup-retire-vrtc",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://edition.cnn.com/2026/02/04/business/elon-musk-orbiting-ai-data-center-plans",
+  "url": "https://edition.cnn.com/2026/02/04/business/elon-musk-orbiting-ai-data-center-plans",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

@@ -1,0 +1,16 @@
+{
+  "judge_llm": {
+    "model": "deepseek-v4-pro",
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "api_key_env": "sk-3fd16f87907349499fd234d3628b63a8"
+  },
+  "judge_embedding": {
+    "model": "Qwen/Qwen3-Embedding-8B",
+    "base_url": "https://api.siliconflow.cn/v1/embeddings",
+    "api_key": "",
+    "api_key_env": "sk-ezhuxcsdkqvnbcdgivzfihvvqahiqvirifckmyftzvnrmebp"
+  },
+  "default_top_k": 5,
+  "eval_timeout_seconds": 300
+}

@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://www.bbc.com/worklife/article/20251104-the-story-behind-the-scramble-for-greenlands-rare-earths",
+  "url": "https://www.bbc.com/worklife/article/20251104-the-story-behind-the-scramble-for-greenlands-rare-earths",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://www.bbc.com/iplayer/group/m001bm4d?at_audience_id=ss&at_bbc_team=bbc&at_brand=m001bm4d&at_campaign=iplayer_new_and_trending&at_campaign_type=owned&at_format=image&at_link_title=iplayer_new_and_trending&at_medium=display_ad&at_mid=uhovttclku&at_nation=net&at_objective=consumption&at_product=iplayer&at_ptr_name=bbc&at_ptr_type=media",
+  "url": "https://www.bbc.com/iplayer/group/m001bm4d?at_mid=uHOvttClku&at_campaign=iPlayer_New_and_Trending&at_medium=display_ad&at_campaign_type=owned&at_nation=NET&at_audience_id=SS&at_product=iplayer&at_brand=m001bm4d&at_ptr_name=bbc&at_ptr_type=media&at_format=image&at_objective=consumption&at_link_title=iPlayer_New_and_Trending&at_bbc_team=BBC",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

@@ -1,0 +1,5 @@
+# RAGAs 评估框架依赖（仅开发/CI 环境，不影响生产镜像）
+ragas>=0.4.0
+datasets>=2.0.0
+langchain-openai>=0.3.0
+langchain-core>=0.3.0

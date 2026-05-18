@@ -1,0 +1,11 @@
+{
+  "id": "aba9JNsxRheFLZELb",
+  "name": "web-crawler-cnn-aa2886da-8f947eb6a397",
+  "accessed_at": "2026-05-18 17:44:37.013748+00:00",
+  "created_at": "2026-05-18 17:44:03.730775+00:00",
+  "modified_at": "2026-05-18 17:44:37.013748+00:00",
+  "had_multiple_clients": false,
+  "handled_request_count": 11,
+  "pending_request_count": 764,
+  "total_request_count": 775
+}

@@ -1,7 +1,7 @@
 # Logos 技术债务与架构遗留问题清单 (Tech Debt Tracker)
 
 > **基于代码版本**：当前 main 分支最新代码
-> **审计时间**：2026-05-15
+> **审计时间**：2026-05-19
 
 ---
 
@@ -32,7 +32,7 @@
 - `services/brief_service.py` — 无测试
 - `services/web_search_service.py` — 无测试
 - `infrastructure/web_search_client.py` — 无测试
-- `infrastructure/web_crawler.py` — 无测试
+- `infrastructure/web_crawler.py` — 已有基础行为测试，仍缺少真实站点集成测试
 - `infrastructure/embedding_client.py` — 仅通过集成测试间接覆盖，无独立单元测试
 - `infrastructure/chunking_service.py` — 无独立单元测试
 - `delivery/api/brief_router.py` — 无路由测试
@@ -98,13 +98,11 @@ structlog.get_logger(__name__).warning(f"{info.field_name} 为空", field=info.f
 
 **建议**：使用 `langdetect` 或 `lingua-py` 等专业库替代。
 
-### 2. Celery 任务缺乏细粒度重试补偿
+### ~~2. Celery 任务缺乏细粒度重试补偿~~ ✅ 已修复
 
 **位置**：`scheduler/tasks.py`
 
-虽然 `run_pipeline_task` 和 `run_daily_brief_task` 已声明 `max_retries=3`（`@shared_task(bind=True, max_retries=3)`），但代码中没有显式调用 `self.retry()` 来触发 Celery 的自动重试机制。当任务内部出现异常时，未利用 Celery 的 `autoretry_for` 或手动 `self.retry(exc=e)` 进行细粒度补偿。`run_cleanup_task` 则完全没有声明 `max_retries`。
-
-**建议**：使用 `autoretry_for=(Exception,)` 或在 except 块中显式调用 `self.retry(exc=e, countdown=60)`。
+`run_pipeline_task`、`run_daily_brief_task`、`run_cleanup_task` 已统一启用 `autoretry_for=(Exception,)`、`retry_backoff` 与 `retry_jitter`。任务级异常会触发 Celery 自动重试；Pipeline 内部的阶段级/单源错误仍按原策略记录并继续。
 
 ---
 
@@ -118,13 +116,11 @@ structlog.get_logger(__name__).warning(f"{info.field_name} 为空", field=info.f
 
 ## 五、性能/安全隐患
 
-### 1. Pipeline 无并发抓取 (性能隐患)
+### ~~1. Pipeline 无并发抓取 (性能隐患)~~ ✅ 已修复
 
 **位置**：`infrastructure/collector.py`, `services/pipeline_service.py`
 
-RSS 抓取仍然是串行的（逐个 feed 处理），当 RSS 源较多时抓取缓慢。`WebCrawler` 使用了 Crawlee 实现了异步并发，但 `NewsCollector.fetch_all()` 和 `PipelineService._collect_all()` 均为同步串行。
-
-**建议**：使用 `ThreadPoolExecutor` 或 `asyncio` 并发抓取多个 RSS 源。
+`NewsCollector.fetch_all()` 已使用 `ThreadPoolExecutor` 并发抓取多个 RSS 源，单源失败仍独立记录，不影响其他源和后续 Pipeline 阶段。
 
 ### 2. 无认证/授权 (安全隐患)
 
@@ -201,32 +197,17 @@ except Exception as e:
     vectorized = False
 ```
 
-### 6. `scheduler/tasks.py` 跨层直接导入 Router 内部函数
+### ~~6. `scheduler/tasks.py` 跨层直接导入 Router 内部函数~~ ✅ 已修复
 
 **位置**：`scheduler/tasks.py` — L44
 
-```python
-from delivery.api.settings_router import _load_feeds, _load_sites
-```
+RSS 源和网页爬取源的 JSON 读写已抽到 `core/source_config.py`。`settings_router.py` 和 `scheduler/tasks.py` 共同依赖该模块，避免 Scheduler 反向依赖 Delivery 层私有函数。
 
-Celery 任务直接导入 Delivery 层 Router 的私有函数（以 `_` 开头），违反了分层架构的单向依赖规则（调度层不应直接依赖表现层的内部实现）。
-
-**建议**：将 `_load_feeds` / `_load_sites` 提取到 `core/` 或 `services/` 层的共享模块中。
-
-### 7. `WebCrawler.crawl_all` 中临时修改 `self.max_pages` 非线程安全
+### ~~7. `WebCrawler.crawl_all` 中临时修改 `self.max_pages` 非线程安全~~ ✅ 已修复
 
 **位置**：`infrastructure/web_crawler.py` — L148-151
 
-```python
-old_max = self.max_pages
-self.max_pages = max_pages
-articles = self.crawl_site(name, url, link_selector)
-self.max_pages = old_max
-```
-
-通过临时覆盖实例属性来传递每站点的 `max_pages` 配置，如果在并发场景下调用会导致竞态条件。
-
-**建议**：将 `max_pages` 作为参数传入 `crawl_site` / `_crawl`，而非修改实例状态。
+`max_pages` 已作为参数从 `crawl_all()` 传入 `crawl_site()` / `_crawl()`，不再临时覆盖实例属性。新增测试覆盖 per-site `max_pages` 传递与实例状态不变。
 
 ---
 
@@ -236,14 +217,14 @@ self.max_pages = old_max
 |---|---|---|---|
 | 🔴 高 | 无认证/敏感信息泄露 | 性能/安全隐患 | ⬜ 待修复 |
 | ~~🔴 高~~ | ~~API Router 每次请求重建 Service~~ | ~~架构遗留问题~~ | ✅ 已修复 |
-| 🟡 中 | Pipeline 无并发抓取 | 性能/安全隐患 | ⬜ 待修复 |
+| ~~🟡 中~~ | ~~Pipeline 无并发抓取~~ | ~~性能/安全隐患~~ | ✅ 已修复 |
 | 🟡 中 | 测试覆盖不完整 | 已知缺陷 | ⬜ 待修复 |
-| 🟡 中 | Celery 缺乏细粒度重试 | 暂时 workaround | ⬜ 待修复 |
-| 🟡 中 | scheduler 跨层导入 router 私有函数 | 不规范实现 | ⬜ 待修复 |
+| ~~🟡 中~~ | ~~Celery 缺乏细粒度重试~~ | ~~暂时 workaround~~ | ✅ 已修复 |
+| ~~🟡 中~~ | ~~scheduler 跨层导入 router 私有函数~~ | ~~不规范实现~~ | ✅ 已修复 |
 | 🟡 中 | 裸异常捕获 (newsapi_router) | 不规范实现 | ⬜ 待修复 |
 | 🟢 低 | 日期提取/语言检测重复 | 不规范实现 | ⬜ 待修复 |
 | ~~🟢 低~~ | ~~WebhookService 缺少 Protocol~~ | ~~架构遗留问题~~ | ✅ 已修复 |
 | 🟢 低 | TS/JS 混用 | 不规范实现 | ⬜ 待修复 |
 | 🟢 低 | 单环境 .env 配置 | 性能/安全隐患 | ⬜ 待修复 |
 | 🟢 低 | config.py 中 logging 使用不一致 | 已知缺陷 | ⬜ 待修复 |
-| 🟢 低 | WebCrawler.max_pages 非线程安全 | 不规范实现 | ⬜ 待修复 |
+| ~~🟢 低~~ | ~~WebCrawler.max_pages 非线程安全~~ | ~~不规范实现~~ | ✅ 已修复 |

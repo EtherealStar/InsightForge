@@ -200,7 +200,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { settingsApi, newsApi } from '../api'
+import { settingsApi, newsApi, waitForTask } from '../api'
 
 const feeds = ref([])
 const sites = ref([])
@@ -317,8 +317,26 @@ async function runPipeline() {
   pipelineRunning.value = true
   try {
     const res = await newsApi.runPipeline()
-    const r = res.data.result
-    showToast(`Pipeline 完成！新增 ${r.new} 篇`, 'success')
+    const taskId = res.data.task_id
+    if (!taskId) {
+      throw new Error(res.data.message || '未返回任务 ID')
+    }
+
+    showToast('Pipeline 已开始，正在等待结果...', 'info')
+    const r = await waitForTask(taskId)
+    if (r === 'Skipped') {
+      showToast('Pipeline 已跳过：尚未达到自动抓取间隔', 'info')
+      return
+    }
+    if (!r || typeof r !== 'object') {
+      throw new Error('任务完成但未返回有效结果')
+    }
+
+    if (r.errors && r.errors.length > 0) {
+      showToast(`Pipeline 完成(带错误)！新增 ${r.new} 篇。错误: ${r.errors[0]}`, 'warning')
+    } else {
+      showToast(`Pipeline 完成！新增 ${r.new} 篇，向量化 ${r.embedded} 篇`, 'success')
+    }
     fetchStats()
   } catch (e) {
     showToast('执行失败: ' + (e.response?.data?.detail || e.message), 'error')

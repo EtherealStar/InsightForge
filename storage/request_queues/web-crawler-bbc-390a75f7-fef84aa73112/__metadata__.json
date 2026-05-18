@@ -1,0 +1,11 @@
+{
+  "id": "rhN9v5KXALrvM2qgM",
+  "name": "web-crawler-bbc-390a75f7-fef84aa73112",
+  "accessed_at": "2026-05-18 17:44:03.680217+00:00",
+  "created_at": "2026-05-18 17:43:46.927046+00:00",
+  "modified_at": "2026-05-18 17:44:03.680217+00:00",
+  "had_multiple_clients": false,
+  "handled_request_count": 10,
+  "pending_request_count": 653,
+  "total_request_count": 663
+}

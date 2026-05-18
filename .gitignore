@@ -30,3 +30,7 @@ delivery/static/
 
 # tbls 生成的 schema 数据 (可随时重新生成)
 docs/generated/dbdoc/schema.json
+
+# RAGAs 评估
+evals/results/
+evals/datasets/generated/

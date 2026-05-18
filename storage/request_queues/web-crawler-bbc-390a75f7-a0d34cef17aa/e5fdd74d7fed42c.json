@@ -1,0 +1,16 @@
+{
+  "unique_key": "https://bbc.com",
+  "url": "https://bbc.com",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "state": 4
+    }
+  },
+  "retry_count": 1,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": "2026-05-18 17:41:43.822801+00:00"
+}

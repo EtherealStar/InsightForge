@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://edition.cnn.com/entertainment-showbiz-hollywood-movies-the-devil-wears-prada-2-meryl-streep-anne-hathaway-emily-blunt-stanley-tucci",
+  "url": "https://edition.cnn.com/entertainment-showbiz-hollywood-movies-the-devil-wears-prada-2-meryl-streep-anne-hathaway-emily-blunt-stanley-tucci",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 2
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

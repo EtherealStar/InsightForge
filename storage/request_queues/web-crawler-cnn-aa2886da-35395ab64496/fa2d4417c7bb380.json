@@ -1,0 +1,17 @@
+{
+  "unique_key": "https://edition.cnn.com/audio/podcasts/5-things",
+  "url": "https://edition.cnn.com/audio/podcasts/5-things",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "enqueueStrategy": "same-domain",
+      "crawlDepth": 1
+    }
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}
