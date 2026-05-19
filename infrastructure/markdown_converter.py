@@ -10,6 +10,7 @@ import re
 import hashlib
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 from bs4 import BeautifulSoup, Tag
@@ -29,7 +30,41 @@ _TAGS_TO_REMOVE = [
 _NOISE_CLASS_RE = re.compile(
     r"nav|menu|sidebar|share|social|comment|related|recommend|"
     r"footer|cookie|banner|ads|popup|modal|subscribe|signup|"
-    r"newsletter|pagination|breadcrumb",
+    r"newsletter|pagination|breadcrumb|sider|download|app|qrcode|"
+    r"beian|copyright|matrix|feedback|report|hot|rank|common_sider",
+    re.I,
+)
+
+_THEPAPER_CONTENT_SELECTORS = [
+    "div.news_txt",
+    "div.index_cententWrap__Jv8jK",
+    "div[class*='news_txt']",
+    "div[class*='cententWrap']",
+    "main",
+]
+
+_THEPAPER_NOISE_SELECTORS = [
+    ".common_sider",
+    "[class*='common_sider']",
+    "[class*='download']",
+    "[class*='app']",
+    "[class*='footer']",
+    "[class*='matrix']",
+    "[class*='feedback']",
+    "[class*='report']",
+    "[class*='hot']",
+    "[class*='rank']",
+]
+
+_THEPAPER_FOOTER_START_RE = re.compile(
+    r"(?m)^(?:#{1,6}\s*)?(?:\*\*)?扫码下载(?:\*\*)?(?:\*\*)?澎湃新闻客户端(?:\*\*)?.*$"
+)
+
+_THEPAPER_NOISE_LINE_RE = re.compile(
+    r"Android版|iPhone版|iPad版|关于澎湃|加入澎湃|联系我们|广告合作|法律声明|隐私政策|"
+    r"澎湃矩阵|澎湃新闻微博|澎湃新闻公众号|澎湃新闻抖音号|新闻报料|报料热线|报料邮箱|"
+    r"沪ICP备|沪公网安备|互联网新闻信息服务许可证|增值电信业务经营许可证|"
+    r"上海东方报业有限公司|beian\.miit\.gov\.cn|beian\.gov\.cn|yunaq\.com|反馈",
     re.I,
 )
 
@@ -73,7 +108,13 @@ class NewsMarkdownConverter:
 
         # Step 2: 转换内容为 Markdown
         if html and html.strip():
-            markdown_content = self._html_to_markdown(html)
+            markdown_content = self._html_to_markdown(
+                html,
+                source=article.source,
+                url=article.url,
+                content_selector=getattr(article, "content_selector", None),
+                noise_selectors=getattr(article, "noise_selectors", None),
+            )
         elif plain and plain.strip():
             # 纯文本本身就可视为 Markdown，但做基本清理
             markdown_content = self._sanitize_markdown(plain)
@@ -171,7 +212,14 @@ class NewsMarkdownConverter:
     # 内部方法
     # ------------------------------------------------------------------
 
-    def _html_to_markdown(self, html: str) -> str:
+    def _html_to_markdown(
+        self,
+        html: str,
+        source: str = "",
+        url: str = "",
+        content_selector: str | None = None,
+        noise_selectors: list[str] | None = None,
+    ) -> str:
         """
         将 HTML 转为 Markdown，包含正文提取和预清理。
 
@@ -183,12 +231,21 @@ class NewsMarkdownConverter:
         """
         try:
             soup = BeautifulSoup(html, "html.parser")
+            site_key = _detect_site_key(source, url)
 
             # 1. 尝试定位正文容器，缩小转换范围
-            body = self._find_content_root(soup)
+            body = self._find_content_root(
+                soup,
+                site_key=site_key,
+                content_selector=content_selector,
+            )
 
             # 2. 彻底移除非正文标签（标签 + 内容一起删除）
-            self._remove_noise_elements(body)
+            self._remove_noise_elements(
+                body,
+                site_key=site_key,
+                noise_selectors=noise_selectors,
+            )
 
             # 3. 转换清理后的 HTML
             cleaned_html = str(body)
@@ -197,20 +254,32 @@ class NewsMarkdownConverter:
                 heading_style="ATX",
                 wrap=False,
             )
-            return self._sanitize_markdown(markdown_text)
+            return self._sanitize_markdown(markdown_text, site_key=site_key)
 
         except Exception as e:
             logger.warning(f"markdownify 转换异常，回退到纯文本提取: {e}")
             # 回退：用 BeautifulSoup 提取纯文本
             try:
                 soup = BeautifulSoup(html, "html.parser")
-                self._remove_noise_elements(soup)
-                return self._sanitize_markdown(soup.get_text(separator="\n"))
+                site_key = _detect_site_key(source, url)
+                self._remove_noise_elements(
+                    soup,
+                    site_key=site_key,
+                    noise_selectors=noise_selectors,
+                )
+                return self._sanitize_markdown(
+                    soup.get_text(separator="\n"),
+                    site_key=site_key,
+                )
             except Exception:
                 return ""
 
     @staticmethod
-    def _find_content_root(soup: BeautifulSoup) -> BeautifulSoup | Tag:
+    def _find_content_root(
+        soup: BeautifulSoup,
+        site_key: str = "",
+        content_selector: str | None = None,
+    ) -> BeautifulSoup | Tag:
         """
         尝试定位 HTML 中的正文容器。
 
@@ -220,6 +289,20 @@ class NewsMarkdownConverter:
         3. 常见正文 class（post-content, article-body, entry-content 等）
         4. 回退到整个 soup
         """
+        selectors = []
+        if content_selector:
+            selectors.append(content_selector)
+        if site_key == "thepaper":
+            selectors.extend(_THEPAPER_CONTENT_SELECTORS)
+
+        for selector in selectors:
+            try:
+                content = soup.select_one(selector)
+            except Exception:
+                continue
+            if content and content.get_text(strip=True):
+                return content
+
         # 优先 <article>
         article_tag = soup.find("article")
         if article_tag:
@@ -245,7 +328,11 @@ class NewsMarkdownConverter:
         return soup
 
     @staticmethod
-    def _remove_noise_elements(soup: BeautifulSoup | Tag) -> None:
+    def _remove_noise_elements(
+        soup: BeautifulSoup | Tag,
+        site_key: str = "",
+        noise_selectors: list[str] | None = None,
+    ) -> None:
         """
         从 soup 中彻底移除非正文元素（decompose = 标签 + 内容一起删除）。
 
@@ -257,6 +344,18 @@ class NewsMarkdownConverter:
         # 移除指定标签（含内容）
         for tag in soup.find_all(_TAGS_TO_REMOVE):
             tag.decompose()
+
+        selectors = list(noise_selectors or [])
+        if site_key == "thepaper":
+            selectors.extend(_THEPAPER_NOISE_SELECTORS)
+
+        for selector in selectors:
+            try:
+                tags = list(soup.select(selector))
+            except Exception:
+                continue
+            for tag in tags:
+                tag.decompose()
 
         # 移除包含噪音 class 的元素
         for tag in soup.find_all(class_=_NOISE_CLASS_RE):
@@ -427,7 +526,7 @@ class NewsMarkdownConverter:
         return ""
 
     @staticmethod
-    def _sanitize_markdown(text: str) -> str:
+    def _sanitize_markdown(text: str, site_key: str = "") -> str:
         """
         清理 Markdown 文本：
         - 确保标题前后有空行，以便正确渲染
@@ -437,6 +536,9 @@ class NewsMarkdownConverter:
         """
         if not text:
             return ""
+
+        if site_key == "thepaper":
+            text = _sanitize_thepaper_markdown(text)
 
         # 去除行尾空格
         lines = [line.rstrip() for line in text.splitlines()]
@@ -517,3 +619,26 @@ def _parse_datetime(date_str: str) -> datetime | None:
         except (ValueError, TypeError):
             continue
     return None
+
+
+def _detect_site_key(source: str = "", url: str = "") -> str:
+    """Detect known sites for built-in extraction/cleanup rules."""
+    host = urlparse(url).netloc.lower()
+    source_lower = (source or "").lower()
+    if "thepaper.cn" in host or "澎湃" in source_lower or "thepaper" in source_lower:
+        return "thepaper"
+    return ""
+
+
+def _sanitize_thepaper_markdown(text: str) -> str:
+    """Remove The Paper site chrome that can leak through HTML conversion."""
+    footer_match = _THEPAPER_FOOTER_START_RE.search(text)
+    if footer_match:
+        text = text[:footer_match.start()]
+
+    lines = []
+    for line in text.splitlines():
+        if _THEPAPER_NOISE_LINE_RE.search(line):
+            continue
+        lines.append(line)
+    return "\n".join(lines)

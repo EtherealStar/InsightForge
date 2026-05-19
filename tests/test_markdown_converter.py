@@ -201,6 +201,95 @@ class TestHtmlCleaning:
         assert "推荐阅读" not in article.content
         assert "正文内容" in article.content
 
+    def test_thepaper_article_noise_removed(self, converter):
+        """澎湃文章页应保留正文并移除 common_sider / 下载 / 备案页脚。"""
+        html = '''
+        <html><body>
+        <div class="common_sider">common_sider 下载APP 热榜</div>
+        <div class="news_txt">
+            <h1>最高检公布最新侵犯公民人身自由赔偿金标准</h1>
+            <p>谷芳卿/检察日报</p>
+            <p>2026-05-19 13:44</p>
+            <p>最高人民检察院日前下发通知，执行新的日赔偿标准495.94元。</p>
+            <p>责任编辑：伍智超</p>
+            <p>澎湃新闻，未经授权不得转载</p>
+            <div class="common_sider">侧栏不应出现</div>
+        </div>
+        <div class="footer">
+            <h4>扫码下载澎湃新闻客户端</h4>
+            <a>Android版</a>
+            <p>澎湃矩阵</p>
+            <p>沪ICP备14003370号</p>
+            <p>反馈</p>
+        </div>
+        </body></html>
+        '''
+        article = Article(
+            title="最高检公布最新侵犯公民人身自由赔偿金标准",
+            url="https://www.thepaper.cn/newsDetail_forward_33198341",
+            source="澎湃",
+            html_content=html,
+        )
+        converter.convert_article(article)
+
+        assert "最高人民检察院日前下发通知" in article.content
+        assert "责任编辑：伍智超" in article.content
+        assert "澎湃新闻，未经授权不得转载" in article.content
+        assert "common_sider" not in article.content
+        assert "侧栏不应出现" not in article.content
+        assert "扫码下载澎湃新闻客户端" not in article.content
+        assert "Android版" not in article.content
+        assert "沪ICP备" not in article.content
+        assert "澎湃矩阵" not in article.content
+        assert "反馈" not in article.content
+
+    def test_configured_content_and_noise_selectors_are_used(self, converter):
+        """站点配置的正文和噪声 selector 应参与 Markdown 转换。"""
+        html = '''
+        <html><body>
+        <div class="listing">栏目列表内容</div>
+        <section class="story-body">
+            <p>这是配置 selector 找到的正文内容。</p>
+            <div class="ad-box">广告内容</div>
+        </section>
+        </body></html>
+        '''
+        article = Article(title="测试", url="https://example.com/story/1", html_content=html)
+        article.content_selector = ".story-body"
+        article.noise_selectors = [".ad-box"]
+        converter.convert_article(article)
+
+        assert "正文内容" in article.content
+        assert "广告内容" not in article.content
+        assert "栏目列表内容" not in article.content
+
+    def test_thepaper_footer_text_fallback_removed(self, converter):
+        """即使页脚没有可识别 class，也应通过文本兜底截断澎湃 APP/备案信息。"""
+        html = '''
+        <html><body>
+        <div class="news_txt">
+            <p>正文第一段。</p>
+            <p>责任编辑：伍智超</p>
+            <h4>扫码下载澎湃新闻客户端</h4>
+            <p>Android版</p>
+            <p>沪公网安备31010602000299号</p>
+        </div>
+        </body></html>
+        '''
+        article = Article(
+            title="测试",
+            url="https://www.thepaper.cn/newsDetail_forward_33198341",
+            html_content=html,
+            source="澎湃",
+        )
+        converter.convert_article(article)
+
+        assert "正文第一段" in article.content
+        assert "责任编辑" in article.content
+        assert "扫码下载" not in article.content
+        assert "Android版" not in article.content
+        assert "沪公网安备" not in article.content
+
 
 # ------------------------------------------------------------------
 # 正文容器定位测试

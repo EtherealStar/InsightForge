@@ -42,7 +42,7 @@ start_dev.bat
 
 > 脚本会自动启动 Docker Compose 基础设施 + FastAPI 后端 + Celery Worker + Celery Beat + Flower 监控 + Vue 前端，共 6 个服务。
 
-浏览器访问 **http://:5173** （前端支持热更新 HMR）
+浏览器访问 **http://localhost:5173** （前端支持热更新 HMR）
 
 #### 方式 B：手动分布启动
 

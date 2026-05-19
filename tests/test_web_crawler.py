@@ -2,7 +2,13 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from infrastructure.web_crawler import WebCrawler, _build_storage_name
+from infrastructure.web_crawler import (
+    WebCrawler,
+    _build_storage_name,
+    _canonicalize_url,
+    _merge_rules,
+    _url_matches_rules,
+)
 
 
 class _FakeRouter:
@@ -88,6 +94,71 @@ def test_crawl_all_passes_site_max_pages_without_mutating_instance():
     assert articles == []
     assert errors == []
     crawl_site.assert_called_once_with(
-        "custom", "https://example.com", "a.article", 3
+        "custom", "https://example.com", "a.article", 3, None, None, None, None
     )
     assert crawler.max_pages == 20
+
+
+def test_thepaper_builtin_rules_accept_article_url():
+    rules = _merge_rules("澎湃", "https://www.thepaper.cn/")
+
+    assert _url_matches_rules(
+        "https://www.thepaper.cn/newsDetail_forward_33198341",
+        rules,
+    )
+
+
+def test_thepaper_builtin_rules_reject_section_download_and_comment_urls():
+    rules = _merge_rules("澎湃", "https://www.thepaper.cn/")
+
+    assert not _url_matches_rules("https://www.thepaper.cn/list_25425", rules)
+    assert not _url_matches_rules("https://m.thepaper.cn/download?id=2", rules)
+    assert not _url_matches_rules(
+        "https://www.thepaper.cn/newsDetail_forward_33198341?commTag=true",
+        rules,
+    )
+
+
+def test_unconfigured_site_keeps_legacy_url_acceptance():
+    rules = _merge_rules("Example", "https://example.com/")
+
+    assert _url_matches_rules("https://example.com/section", rules)
+    assert _url_matches_rules("https://example.com/story/123", rules)
+
+
+def test_canonicalize_url_removes_tracking_query_and_fragment():
+    url = _canonicalize_url(
+        "https://www.thepaper.cn/newsDetail_forward_33198341?commTag=true&utm_source=x#comments"
+    )
+
+    assert url == "https://www.thepaper.cn/newsDetail_forward_33198341"
+
+
+def test_crawl_all_passes_extended_site_rules():
+    crawler = WebCrawler(max_pages=20)
+    site = {
+        "name": "custom",
+        "url": "https://example.com",
+        "max_pages": 3,
+        "link_selector": "a.article",
+        "article_url_patterns": [r"/story/\d+"],
+        "exclude_url_patterns": [r"/tag/"],
+        "content_selector": "article",
+        "noise_selectors": [".sidebar"],
+    }
+
+    with patch.object(crawler, "crawl_site", return_value=[]) as crawl_site:
+        articles, errors = crawler.crawl_all([site])
+
+    assert articles == []
+    assert errors == []
+    crawl_site.assert_called_once_with(
+        "custom",
+        "https://example.com",
+        "a.article",
+        3,
+        [r"/story/\d+"],
+        [r"/tag/"],
+        "article",
+        [".sidebar"],
+    )

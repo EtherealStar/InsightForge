@@ -76,6 +76,26 @@
             <input v-model="newSite.link_selector" class="input"
               placeholder="例: a.article-link（留空则自动发现所有链接）" />
           </div>
+          <div class="form-group">
+            <label class="form-label">文章 URL 正则（每行一个，可选）</label>
+            <textarea v-model="newSite.article_url_patterns" class="input textarea"
+              placeholder="例: /newsDetail_forward_\\d+"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">排除 URL 正则（每行一个，可选）</label>
+            <textarea v-model="newSite.exclude_url_patterns" class="input textarea"
+              placeholder="例: /list_\\d+"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">正文容器选择器（CSS selector，可选）</label>
+            <input v-model="newSite.content_selector" class="input"
+              placeholder="例: article, .news_txt" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">噪声选择器（每行一个，可选）</label>
+            <textarea v-model="newSite.noise_selectors" class="input textarea"
+              placeholder="例: .common_sider"></textarea>
+          </div>
         </details>
 
         <div class="table-wrapper" v-if="sites.length">
@@ -99,6 +119,13 @@
                   </a>
                   <span v-if="site.link_selector" class="selector-tag" :title="site.link_selector">
                     {{ site.link_selector }}
+                  </span>
+                  <span v-if="site.article_url_patterns?.length" class="selector-tag"
+                    :title="site.article_url_patterns.join('\n')">
+                    URL规则
+                  </span>
+                  <span v-if="site.content_selector" class="selector-tag" :title="site.content_selector">
+                    正文选择器
                   </span>
                 </td>
                 <td style="text-align:center">{{ site.max_pages }}</td>
@@ -208,7 +235,16 @@ const schedule = ref(null)
 const stats = ref(null)
 const pipelineRunning = ref(false)
 const newFeed = ref({ name: '', url: '' })
-const newSite = ref({ name: '', url: '', max_pages: 20, link_selector: '' })
+const newSite = ref({
+  name: '',
+  url: '',
+  max_pages: 20,
+  link_selector: '',
+  article_url_patterns: '',
+  exclude_url_patterns: '',
+  content_selector: '',
+  noise_selectors: '',
+})
 const toast = ref({ show: false, message: '', type: 'info' })
 
 function showToast(message, type = 'info') {
@@ -265,13 +301,33 @@ async function addSite() {
       url: newSite.value.url,
       max_pages: newSite.value.max_pages || 20,
       link_selector: newSite.value.link_selector || '',
+      article_url_patterns: parseLines(newSite.value.article_url_patterns),
+      exclude_url_patterns: parseLines(newSite.value.exclude_url_patterns),
+      content_selector: newSite.value.content_selector || '',
+      noise_selectors: parseLines(newSite.value.noise_selectors),
     })
     showToast('爬取源添加成功', 'success')
-    newSite.value = { name: '', url: '', max_pages: 20, link_selector: '' }
+    newSite.value = {
+      name: '',
+      url: '',
+      max_pages: 20,
+      link_selector: '',
+      article_url_patterns: '',
+      exclude_url_patterns: '',
+      content_selector: '',
+      noise_selectors: '',
+    }
     fetchSites()
   } catch (e) {
     showToast(e.response?.data?.detail || '添加失败', 'error')
   }
+}
+
+function parseLines(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
 }
 
 async function deleteSite(site) {
@@ -413,6 +469,13 @@ onMounted(() => {
 .advanced-options summary {
   cursor: pointer;
   user-select: none;
+}
+.advanced-options .form-group {
+  margin-bottom: var(--space-sm);
+}
+.textarea {
+  min-height: 70px;
+  resize: vertical;
 }
 
 .selector-tag {

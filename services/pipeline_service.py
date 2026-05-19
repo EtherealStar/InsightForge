@@ -141,7 +141,8 @@ class PipelineService:
                 result["errors"].append(msg)
 
         # Step 5: AI 摘要 + 打标签
-        if self.summary_service:
+        # 临时跳过AI摘要
+        if False and self.summary_service:
             try:
                 summary_result = self.summary_service.summarize_pending()
                 result["summarized"] = summary_result.get("success", 0)

@@ -1,6 +1,6 @@
 """功能设置 API"""
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from core.source_config import load_feeds, save_feeds, load_sites, save_sites
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -16,6 +16,10 @@ class SiteItem(BaseModel):
     url: str
     max_pages: int = 20
     link_selector: str = ""
+    article_url_patterns: list[str] = Field(default_factory=list)
+    exclude_url_patterns: list[str] = Field(default_factory=list)
+    content_selector: str = ""
+    noise_selectors: list[str] = Field(default_factory=list)
 
 
 class ScheduleConfig(BaseModel):
@@ -119,6 +123,10 @@ def add_site(site: SiteItem):
         "url": site.url,
         "max_pages": site.max_pages,
         "link_selector": site.link_selector or "",
+        "article_url_patterns": site.article_url_patterns,
+        "exclude_url_patterns": site.exclude_url_patterns,
+        "content_selector": site.content_selector or "",
+        "noise_selectors": site.noise_selectors,
     })
     save_sites(sites)
     return {"status": "ok", "message": f"已添加: {site.name}"}
@@ -135,6 +143,10 @@ def update_site(site_id: int, site: SiteItem):
         "url": site.url,
         "max_pages": site.max_pages,
         "link_selector": site.link_selector or "",
+        "article_url_patterns": site.article_url_patterns,
+        "exclude_url_patterns": site.exclude_url_patterns,
+        "content_selector": site.content_selector or "",
+        "noise_selectors": site.noise_selectors,
     }
     save_sites(sites)
     return {"status": "ok", "message": f"已更新: {site.name}"}

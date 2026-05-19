@@ -4,8 +4,9 @@ import hashlib
 import re
 import structlog
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import trafilatura
 from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
@@ -17,6 +18,121 @@ from models.article import Article, Language
 from core.exceptions import CollectorError
 
 logger = structlog.get_logger(__name__)
+
+
+_TRACKING_QUERY_PARAMS = {
+    "commtag",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "spm",
+    "from",
+    "ref",
+}
+
+
+@dataclass(frozen=True)
+class _CrawlerRules:
+    article_patterns: tuple[re.Pattern, ...] = ()
+    exclude_patterns: tuple[re.Pattern, ...] = ()
+
+
+_THEPAPER_RULES = _CrawlerRules(
+    article_patterns=(
+        re.compile(r"https?://www\.thepaper\.cn/newsDetail_forward_\d+(?:\?.*)?$", re.I),
+    ),
+    exclude_patterns=(
+        re.compile(r"/list_\d+(?:\?|$)", re.I),
+        re.compile(r"/download(?:\?|$)", re.I),
+        re.compile(r"[?&]commTag=true", re.I),
+    ),
+)
+
+
+def _site_default_rules(site_name: str, site_url: str) -> _CrawlerRules:
+    """Return built-in URL rules for known news sites."""
+    host = urlparse(site_url).netloc.lower()
+    name = site_name.lower()
+    if "thepaper.cn" in host or "澎湃" in name or "thepaper" in name:
+        return _THEPAPER_RULES
+    return _CrawlerRules()
+
+
+def _compile_patterns(patterns: list[str] | tuple[str, ...] | None) -> tuple[re.Pattern, ...]:
+    """Compile user-supplied regex patterns, ignoring invalid entries."""
+    compiled: list[re.Pattern] = []
+    for pattern in patterns or []:
+        if not pattern:
+            continue
+        try:
+            compiled.append(re.compile(pattern, re.I))
+        except re.error as exc:
+            logger.warning(f"忽略无效 URL 规则 '{pattern}': {exc}")
+    return tuple(compiled)
+
+
+def _as_crawlee_patterns(patterns: tuple[re.Pattern, ...]) -> tuple[re.Pattern, ...]:
+    """
+    Crawlee checks include/exclude regexes with re.match().
+
+    User patterns are easier to write as snippets such as /list_\\d+ or
+    [?&]commTag=true, so adapt unanchored expressions to match anywhere.
+    """
+    adapted: list[re.Pattern] = []
+    for pattern in patterns:
+        source = pattern.pattern
+        if source.startswith("^") or source.startswith(".*"):
+            adapted.append(pattern)
+        else:
+            adapted.append(re.compile(f".*(?:{source})", pattern.flags))
+    return tuple(adapted)
+
+
+def _merge_rules(
+    site_name: str,
+    site_url: str,
+    article_url_patterns: list[str] | None = None,
+    exclude_url_patterns: list[str] | None = None,
+) -> _CrawlerRules:
+    """Merge built-in site rules with optional per-site configuration."""
+    defaults = _site_default_rules(site_name, site_url)
+    return _CrawlerRules(
+        article_patterns=defaults.article_patterns + _compile_patterns(article_url_patterns),
+        exclude_patterns=defaults.exclude_patterns + _compile_patterns(exclude_url_patterns),
+    )
+
+
+def _canonicalize_url(url: str) -> str:
+    """Normalize URLs for storage/deduplication without changing path case."""
+    parsed = urlparse(url)
+    kept_params = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() not in _TRACKING_QUERY_PARAMS and not key.lower().startswith("utm_")
+    ]
+    return urlunparse(
+        (
+            parsed.scheme.lower(),
+            parsed.netloc.lower(),
+            parsed.path,
+            parsed.params,
+            urlencode(kept_params, doseq=True),
+            "",
+        )
+    )
+
+
+def _url_matches_rules(url: str, rules: _CrawlerRules) -> bool:
+    """Return whether a URL should be processed as an article."""
+    canonical_url = _canonicalize_url(url)
+    for pattern in rules.exclude_patterns:
+        if pattern.search(url) or pattern.search(canonical_url):
+            return False
+    if not rules.article_patterns:
+        return True
+    return any(pattern.search(url) or pattern.search(canonical_url) for pattern in rules.article_patterns)
 
 
 def _build_storage_name(site_name: str, site_url: str) -> str:
@@ -59,11 +175,21 @@ class WebCrawler:
         site_url: str,
         link_selector: str | None = None,
         max_pages: int | None = None,
+        article_url_patterns: list[str] | None = None,
+        exclude_url_patterns: list[str] | None = None,
+        content_selector: str | None = None,
+        noise_selectors: list[str] | None = None,
     ) -> list[Article]:
         """内部异步爬取方法"""
         articles: list[Article] = []
         storage_name = _build_storage_name(site_name, site_url)
         page_limit = max_pages or self.max_pages
+        rules = _merge_rules(
+            site_name,
+            site_url,
+            article_url_patterns=article_url_patterns,
+            exclude_url_patterns=exclude_url_patterns,
+        )
 
         concurrency = ConcurrencySettings(
             desired_concurrency=self.max_concurrency,
@@ -89,34 +215,40 @@ class WebCrawler:
             url = context.request.url
             page_html = str(context.soup)
 
-            full_text = trafilatura.extract(page_html) or ""
-            title_tag = context.soup.find("title")
-            title = title_tag.get_text(strip=True) if title_tag else ""
+            if _url_matches_rules(url, rules):
+                full_text = trafilatura.extract(page_html) or ""
+                title_tag = context.soup.find("title")
+                title = title_tag.get_text(strip=True) if title_tag else ""
 
-            h1_tag = context.soup.find("h1")
-            if h1_tag:
-                h1_text = h1_tag.get_text(strip=True)
-                if h1_text and len(h1_text) > len(title):
-                    title = h1_text
+                h1_tag = context.soup.find("h1")
+                if h1_tag:
+                    h1_text = h1_tag.get_text(strip=True)
+                    if h1_text and len(h1_text) > len(title):
+                        title = h1_text
 
-            if full_text and len(full_text) >= self.MIN_CONTENT_LENGTH and title:
-                language = _detect_language(title + full_text)
-                article = Article(
-                    title=title,
-                    url=url,
-                    content=full_text,
-                    html_content=page_html,
-                    summary=full_text[:500],
-                    source=site_name,
-                    language=language,
-                    published_at=_extract_publish_date(context.soup) or datetime.now(),
-                )
-                articles.append(article)
-                context.log.info(f"提取文章: {title[:60]}")
+                if full_text and len(full_text) >= self.MIN_CONTENT_LENGTH and title:
+                    canonical_url = _canonicalize_url(url)
+                    language = _detect_language(title + full_text)
+                    article = Article(
+                        title=title,
+                        url=canonical_url,
+                        content=full_text,
+                        html_content=page_html,
+                        summary=full_text[:500],
+                        source=site_name,
+                        language=language,
+                        published_at=_extract_publish_date(context.soup) or datetime.now(),
+                    )
+                    article.content_selector = content_selector or ""
+                    article.noise_selectors = noise_selectors or []
+                    articles.append(article)
+                    context.log.info(f"提取文章: {title[:60]}")
 
             await context.enqueue_links(
                 selector=link_selector or "a",
-                strategy="same-domain",
+                strategy="same-hostname",
+                include=_as_crawlee_patterns(rules.article_patterns) or None,
+                exclude=_as_crawlee_patterns(rules.exclude_patterns) or None,
             )
 
         try:
@@ -137,6 +269,10 @@ class WebCrawler:
         site_url: str,
         link_selector: str | None = None,
         max_pages: int | None = None,
+        article_url_patterns: list[str] | None = None,
+        exclude_url_patterns: list[str] | None = None,
+        content_selector: str | None = None,
+        noise_selectors: list[str] | None = None,
     ) -> list[Article]:
         """
         同步入口：爬取指定网站并返回文章列表。
@@ -152,12 +288,30 @@ class WebCrawler:
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(
                     asyncio.run,
-                    self._crawl(site_name, site_url, link_selector, max_pages),
+                    self._crawl(
+                        site_name,
+                        site_url,
+                        link_selector,
+                        max_pages,
+                        article_url_patterns,
+                        exclude_url_patterns,
+                        content_selector,
+                        noise_selectors,
+                    ),
                 )
                 return future.result()
         else:
             return asyncio.run(
-                self._crawl(site_name, site_url, link_selector, max_pages)
+                self._crawl(
+                    site_name,
+                    site_url,
+                    link_selector,
+                    max_pages,
+                    article_url_patterns,
+                    exclude_url_patterns,
+                    content_selector,
+                    noise_selectors,
+                )
             )
 
     def crawl_all(self, sites: list[dict]) -> tuple[list[Article], list[str]]:
@@ -176,8 +330,21 @@ class WebCrawler:
                 continue
             max_pages = site.get("max_pages", self.max_pages)
             link_selector = site.get("link_selector")
+            article_url_patterns = site.get("article_url_patterns")
+            exclude_url_patterns = site.get("exclude_url_patterns")
+            content_selector = site.get("content_selector")
+            noise_selectors = site.get("noise_selectors")
             try:
-                articles = self.crawl_site(name, url, link_selector, max_pages)
+                articles = self.crawl_site(
+                    name,
+                    url,
+                    link_selector,
+                    max_pages,
+                    article_url_patterns,
+                    exclude_url_patterns,
+                    content_selector,
+                    noise_selectors,
+                )
                 all_articles.extend(articles)
                 logger.info(f" {name}: 爬取到 {len(articles)} 篇文章")
             except Exception as e:
