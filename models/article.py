@@ -37,6 +37,11 @@ class ArticleEntity:
     published_at: datetime | None = None
     created_at: datetime = field(default_factory=datetime.now)
     tags: list[str] = field(default_factory=list)
+    semantic_markdown: str = ""
+    semantic_blocks: list[dict] = field(default_factory=list)
+    semantic_page_type: str = ""
+    semantic_confidence: float = 0.0
+    semantic_skip_indexing: bool = False
 
     # 数据库相关
     id: int | None = None

@@ -8,6 +8,7 @@ import structlog
 import re
 import hashlib
 from datetime import datetime
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -19,6 +20,28 @@ from markdownify import markdownify as md
 from models.article import Article
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass
+class MarkdownBlock:
+    """Markdown 语义块，供后续父子分块直接消费。"""
+
+    type: str
+    text: str
+    level: int = 0
+    heading_text: str = ""
+    heading_path: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MarkdownConversionResult:
+    """Markdown 转换后的结构化结果。"""
+
+    markdown: str
+    blocks: list[MarkdownBlock] = field(default_factory=list)
+    page_type: str = "article"
+    confidence: float = 0.0
+    skip_indexing: bool = False
 
 # 需要被 decompose（标签 + 内容一起删除）的标签
 _TAGS_TO_REMOVE = [
@@ -135,10 +158,28 @@ class NewsMarkdownConverter:
             content_selector=getattr(article, "content_selector", None),
             noise_selectors=getattr(article, "noise_selectors", None),
         )
+        semantic_result = self._build_semantic_result(
+            markdown_content,
+            title=article.title,
+        )
 
         # 更新文章字段
-        article.content = markdown_content
+        article.content = semantic_result.markdown
         article.html_content = ""  # 不再保留 HTML
+        article.semantic_markdown = semantic_result.markdown
+        article.semantic_blocks = [
+            {
+                "type": block.type,
+                "text": block.text,
+                "level": block.level,
+                "heading_text": block.heading_text,
+                "heading_path": block.heading_path,
+            }
+            for block in semantic_result.blocks
+        ]
+        article.semantic_page_type = semantic_result.page_type
+        article.semantic_confidence = semantic_result.confidence
+        article.semantic_skip_indexing = semantic_result.skip_indexing
 
         return article
 
@@ -149,15 +190,19 @@ class NewsMarkdownConverter:
         每篇文章独立 try/except，单篇失败不影响整批。
         """
         converted = 0
+        skipped = 0
         for article in articles:
             try:
                 self.convert_article(article)
                 converted += 1
+                if getattr(article, "semantic_skip_indexing", False):
+                    skipped += 1
             except Exception as e:
                 logger.warning(
                     f"Markdown 转换失败: '{article.title[:50]}' — {e}"
                 )
-        logger.info(f"Markdown 转换完成: {converted}/{len(articles)} 篇")
+        suffix = f"，跳过索引 {skipped} 篇" if skipped else ""
+        logger.info(f"Markdown 转换完成: {converted}/{len(articles)} 篇{suffix}")
         return articles
 
     def save_as_file(self, article: Article, base_dir: str) -> Path | None:
@@ -174,6 +219,12 @@ class NewsMarkdownConverter:
             生成的文件路径，失败返回 None
         """
         try:
+            if getattr(article, "semantic_skip_indexing", False):
+                logger.debug(
+                    f"跳过非文章页面的 Markdown 文件保存: '{article.title[:50]}'"
+                )
+                return None
+
             # 按日期建子目录
             date_str = (
                 article.published_at.strftime("%Y-%m-%d")
@@ -300,6 +351,26 @@ class NewsMarkdownConverter:
             f"candidates={[(name, round(score, 2)) for score, name, _ in scored]}"
         )
         return self._normalize_article_markdown(best_text, title)
+
+    def _build_semantic_result(
+        self,
+        markdown: str,
+        title: str = "",
+    ) -> MarkdownConversionResult:
+        """构造结构化 Markdown 结果，供分块和索引阶段使用。"""
+        normalized = self._normalize_article_markdown(markdown, title)
+        blocks = self._extract_semantic_blocks(normalized, title)
+        page_type, confidence, skip_indexing = self._classify_page(
+            normalized,
+            blocks,
+        )
+        return MarkdownConversionResult(
+            markdown=normalized,
+            blocks=blocks,
+            page_type=page_type,
+            confidence=confidence,
+            skip_indexing=skip_indexing,
+        )
 
     def _html_to_markdown(
         self,
@@ -453,7 +524,7 @@ class NewsMarkdownConverter:
         soup: BeautifulSoup,
         site_key: str = "",
         content_selector: str | None = None,
-    ) -> BeautifulSoup | Tag:
+    ) -> tuple[BeautifulSoup | Tag, bool]:
         """
         尝试定位 HTML 中的正文容器。
 
@@ -475,17 +546,17 @@ class NewsMarkdownConverter:
             except Exception:
                 continue
             if content and content.get_text(strip=True):
-                return content
+                return content, True
 
         # 优先 <article>
         article_tag = soup.find("article")
         if article_tag:
-            return article_tag
+            return article_tag, True
 
         # 其次 <main>
         main_tag = soup.find("main")
         if main_tag:
-            return main_tag
+            return main_tag, True
 
         # 常见 CMS 正文 class
         content_class_re = re.compile(
@@ -496,10 +567,10 @@ class NewsMarkdownConverter:
         )
         content_div = soup.find(class_=content_class_re)
         if content_div:
-            return content_div
+            return content_div, True
 
         # 回退到整个 soup
-        return soup
+        return soup, False
 
     @staticmethod
     def _remove_noise_elements(
@@ -769,6 +840,229 @@ class NewsMarkdownConverter:
             return f"# {title}\n\n{body}".strip()
         return f"# {title}"
 
+    def _extract_semantic_blocks(
+        self, markdown: str, title: str = ""
+    ) -> list[MarkdownBlock]:
+        """解析 Markdown block，并为每个 block 标注标题路径。"""
+        raw_blocks = self._parse_markdown_blocks(markdown)
+        if not raw_blocks:
+            return []
+
+        blocks: list[MarkdownBlock] = []
+        heading_stack: list[tuple[int, str]] = []
+        normalized_title = _normalize_heading_text(title)
+
+        for raw in raw_blocks:
+            block_type = raw["type"]
+            text = (raw.get("text") or "").strip()
+            if not text:
+                continue
+
+            if block_type == "heading":
+                level = int(raw.get("level", 0))
+                heading_text = raw.get("heading_text", "").strip()
+                if level == 1 and normalized_title and (
+                    _normalize_heading_text(heading_text) == normalized_title
+                ):
+                    heading_stack = []
+                    continue
+
+                while heading_stack and heading_stack[-1][0] >= level:
+                    heading_stack.pop()
+                heading_stack.append((level, heading_text))
+                heading_path = _dedupe_heading_path(
+                    [title] + [item[1] for item in heading_stack]
+                )
+                blocks.append(
+                    MarkdownBlock(
+                        type="heading",
+                        text=text,
+                        level=level,
+                        heading_text=heading_text,
+                        heading_path=heading_path,
+                    )
+                )
+                continue
+
+            heading_path = _dedupe_heading_path(
+                [title] + [item[1] for item in heading_stack]
+            )
+            blocks.append(
+                MarkdownBlock(
+                    type=block_type,
+                    text=text,
+                    heading_path=heading_path,
+                )
+            )
+
+        return blocks
+
+    @staticmethod
+    def _parse_markdown_blocks(markdown: str) -> list[dict]:
+        """把 Markdown 粗解析为 block，保留列表、表格、引用和代码块。"""
+        blocks: list[dict] = []
+        lines = markdown.splitlines()
+        i = 0
+
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+
+            if not stripped:
+                i += 1
+                continue
+
+            if stripped.startswith("```"):
+                start = i
+                i += 1
+                while i < len(lines):
+                    if lines[i].strip().startswith("```"):
+                        i += 1
+                        break
+                    i += 1
+                blocks.append(
+                    {"type": "code", "text": "\n".join(lines[start:i]).strip()}
+                )
+                continue
+
+            heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", stripped)
+            if heading:
+                blocks.append(
+                    {
+                        "type": "heading",
+                        "text": stripped,
+                        "level": len(heading.group(1)),
+                        "heading_text": heading.group(2).strip(),
+                    }
+                )
+                i += 1
+                continue
+
+            if re.match(r"^\s*\|.*\|\s*$", line):
+                start = i
+                i += 1
+                while i < len(lines) and re.match(r"^\s*\|.*\|\s*$", lines[i]):
+                    i += 1
+                blocks.append(
+                    {"type": "table", "text": "\n".join(lines[start:i]).strip()}
+                )
+                continue
+
+            if re.match(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", line):
+                start = i
+                i += 1
+                while i < len(lines):
+                    next_line = lines[i]
+                    next_stripped = next_line.strip()
+                    if not next_stripped:
+                        i += 1
+                        break
+                    if (
+                        re.match(r"^(#{1,6})\s+", next_stripped)
+                        or re.match(r"^\s*\|.*\|\s*$", next_line)
+                    ):
+                        break
+                    if re.match(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", next_line) or (
+                        next_line.startswith((" ", "\t"))
+                    ):
+                        i += 1
+                        continue
+                    break
+                blocks.append(
+                    {"type": "list", "text": "\n".join(lines[start:i]).strip()}
+                )
+                continue
+
+            if stripped.startswith(">"):
+                start = i
+                i += 1
+                while i < len(lines) and lines[i].strip().startswith(">"):
+                    i += 1
+                blocks.append(
+                    {"type": "quote", "text": "\n".join(lines[start:i]).strip()}
+                )
+                continue
+
+            start = i
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                next_stripped = next_line.strip()
+                if not next_stripped:
+                    break
+                if (
+                    next_stripped.startswith("```")
+                    or re.match(r"^(#{1,6})\s+", next_stripped)
+                    or re.match(r"^\s*\|.*\|\s*$", next_line)
+                    or re.match(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", next_line)
+                    or next_stripped.startswith(">")
+                ):
+                    break
+                i += 1
+            blocks.append(
+                {"type": "paragraph", "text": "\n".join(lines[start:i]).strip()}
+            )
+
+        return blocks
+
+    @staticmethod
+    def _classify_page(
+        markdown: str,
+        blocks: list[MarkdownBlock],
+    ) -> tuple[str, float, bool]:
+        """识别文章页、首页/列表页和空页面。"""
+        stripped = NewsMarkdownConverter._strip_front_matter(markdown or "").strip()
+        visible_chars = len(re.sub(r"\s+", "", stripped))
+        headings = sum(1 for block in blocks if block.type == "heading")
+        paragraphs = sum(1 for block in blocks if block.type == "paragraph")
+        lists = sum(1 for block in blocks if block.type == "list")
+        quotes = sum(1 for block in blocks if block.type == "quote")
+        tables = sum(1 for block in blocks if block.type == "table")
+        links = len(re.findall(r"\[[^\]]+\]\([^)]+\)", stripped))
+        raw_links = len(re.findall(r"https?://", stripped))
+        long_paragraphs = sum(
+            1
+            for block in blocks
+            if block.type == "paragraph"
+            and len(re.sub(r"\s+", "", block.text)) >= 120
+        )
+        short_link_lines = sum(
+            1
+            for line in stripped.splitlines()
+            if re.search(r"\[[^\]]+\]\([^)]+\)", line) and len(line.strip()) <= 120
+        )
+
+        if not blocks:
+            return "empty", 0.05, True
+
+        if (
+            headings >= 5
+            and short_link_lines >= 4
+            and long_paragraphs <= 1
+            and links >= 8
+        ):
+            return "homepage", 0.18, True
+
+        if (
+            (lists >= 4 or short_link_lines >= 3)
+            and long_paragraphs <= 1
+            and headings >= 2
+            and paragraphs <= 4
+        ):
+            return "listing", 0.25, True
+
+        if visible_chars < 80 and paragraphs == 0 and headings <= 1:
+            return "unsupported", 0.2, True
+
+        score = 0.35
+        score += min(visible_chars / 1200, 0.4)
+        score += min(long_paragraphs * 0.08, 0.2)
+        score += min((paragraphs + quotes + tables) * 0.04, 0.2)
+        score -= min(short_link_lines * 0.05, 0.2)
+        score -= min(max(raw_links - links, 0) * 0.02, 0.1)
+        score = max(0.0, min(0.98, score))
+        return "article", score, False
+
     @staticmethod
     def _normalize_heading_levels(text: str, title: str) -> str:
         """把正文内部 H1 降为 H2，并移除与文章标题重复的首个 H1。"""
@@ -917,6 +1211,22 @@ def _normalize_heading_text(text: str) -> str:
     text = re.sub(r"\[[^\]]+\]\([^)]+\)", "", text or "")
     text = re.sub(r"[*_`#>\[\]（）()\s:：|｜,，。.!！?？\"'“”‘’、-]+", "", text)
     return text.lower()
+
+
+def _dedupe_heading_path(path: list[str]) -> list[str]:
+    """Remove empty/repeated headings while keeping their original text."""
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in path:
+        item = (item or "").strip()
+        if not item:
+            continue
+        key = _normalize_heading_text(item)
+        if key and key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
 
 
 def _sanitize_thepaper_markdown(text: str) -> str:

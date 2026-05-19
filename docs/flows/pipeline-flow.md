@@ -99,7 +99,9 @@ NewsMarkdownConverter.convert_batch(articles)
 - HTML 正文提取：	rafilatura 或 BeautifulSoup + markdownify
 - 保留标题层级结构
 - 提取元数据：作者、发布日期、语言
-- rticle.content 存储 Markdown 格式正文
+- 生成结构化语义结果：`semantic_blocks` / `semantic_page_type` / `semantic_skip_indexing`
+- 低质量首页、栏目页、列表页会在转换阶段直接标记为跳过索引
+- `article.content` 存储标准化 Markdown 格式正文
 
 ### 阶段 3: 存储去重 (PostgresArticleStore)
 
@@ -126,7 +128,7 @@ SummaryService.summarize_pending()
 ### 阶段 5: 父子分块 (ChunkingService)
 
 ChunkingService.chunk_articles(articles)
-- 子 chunk：按 Markdown 标题结构切分，每个 <= chunk_max_child_tokens (默认 512)
+- 子 chunk：优先按转换器生成的语义块切分，回退到 Markdown 标题结构，每个 <= chunk_max_child_tokens (默认 512)
 - 父 chunk：聚合若干子 chunk，目标大小 chunk_target_parent_tokens (默认 1024)
 - 重叠：父 chunk 间共享尾部子 chunk，实现 ~ chunk_overlap_tokens (默认 100)
 - 短文档 (<= 1024 tok) 同时视为子 chunk 和父 chunk

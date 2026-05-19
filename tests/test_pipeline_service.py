@@ -129,6 +129,49 @@ class TestPipelineService:
         assert result["new"] == 0
         assert result["errors"] == []
 
+    def test_pipeline_filters_non_article_pages_before_storage(
+        self, mock_vector_store, mock_embedding_client
+    ):
+        """转换器标记的首页/列表页不应保存入库。"""
+        store = MagicMock()
+        store.get_pending_summary.return_value = []
+        store.get_unembedded.return_value = []
+        collector = MagicMock()
+        collector.fetch_all.return_value = [
+            Article(
+                title="BBC News",
+                url="https://www.bbc.com/news",
+                content="\n\n".join(
+                    [
+                        "## Top Stories",
+                        "[Story 1](/news/1)",
+                        "[Story 2](/news/2)",
+                        "## More News",
+                        "[Story 3](/news/3)",
+                        "[Story 4](/news/4)",
+                        "## Most Watched",
+                        "[Video 1](/video/1)",
+                        "[Video 2](/video/2)",
+                        "## Also in News",
+                        "[Story 5](/news/5)",
+                        "## Recommended",
+                        "[Story 6](/news/6)",
+                    ]
+                ),
+                source="bbc",
+                language=Language.EN,
+                published_at=datetime.now(),
+            )
+        ]
+        service = PipelineService(
+            collector, store, mock_vector_store, mock_embedding_client
+        )
+
+        result = service.run()
+
+        assert result["skipped_non_articles"] == 1
+        store.save_articles.assert_not_called()
+
     def test_embed_with_chunks_writes_parents_before_embeddings_and_children(
         self, store, mock_vector_store, mock_embedding_client, mock_chunking_service
     ):

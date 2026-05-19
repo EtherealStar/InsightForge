@@ -68,7 +68,15 @@ class ChunkingService:
         source = article.source or ""
         url = article.url or ""
 
-        sections = self._parse_sections(article.content, doc_name)
+        if getattr(article, "semantic_skip_indexing", False):
+            logger.info(f"跳过非文章页面分块: '{doc_name[:50]}'")
+            return [], []
+
+        sections = self._parse_sections(
+            article.content,
+            doc_name,
+            semantic_blocks=getattr(article, "semantic_blocks", None),
+        )
         children = self._build_child_chunks(
             sections, article_id, doc_name, source, url
         )
@@ -113,7 +121,10 @@ class ChunkingService:
     # ------------------------------------------------------------------
 
     def _parse_sections(
-        self, markdown: str, doc_name: str
+        self,
+        markdown: str,
+        doc_name: str,
+        semantic_blocks: list | None = None,
     ) -> list[dict]:
         """解析 Markdown 的章节结构和 block 边界。
 
@@ -126,6 +137,14 @@ class ChunkingService:
                 "content": str,             # 该 section 的内容（含标题行本身）
             }
         """
+        if semantic_blocks:
+            sections = self._parse_sections_from_semantic_blocks(
+                semantic_blocks,
+                doc_name,
+            )
+            if sections:
+                return sections
+
         blocks = self._parse_markdown_blocks(markdown)
         if not blocks:
             return []
@@ -180,6 +199,67 @@ class ChunkingService:
                 "content": markdown.strip(),
             }
         ]
+
+    @staticmethod
+    def _parse_sections_from_semantic_blocks(
+        semantic_blocks: list,
+        doc_name: str,
+    ) -> list[dict]:
+        """从 NewsMarkdownConverter 提供的语义块还原章节。"""
+        sections: list[dict] = []
+        current: dict | None = None
+        current_path: list[str] | None = None
+
+        def flush_current() -> None:
+            nonlocal current
+            if current and current["blocks"]:
+                ChunkingService._finalize_section(sections, current)
+            current = None
+
+        for block in semantic_blocks:
+            if hasattr(block, "__dict__"):
+                block_data = block.__dict__
+            elif isinstance(block, dict):
+                block_data = block
+            else:
+                continue
+
+            text = (block_data.get("text") or "").strip()
+            if not text:
+                continue
+
+            path = block_data.get("heading_path") or [doc_name]
+            path = _dedupe_heading_path([str(item) for item in path])
+            if not path:
+                path = [doc_name]
+
+            if current_path != path:
+                flush_current()
+                current_path = path
+                current = {
+                    "heading_level": max(0, len(path) - 1),
+                    "heading_text": path[-1] if path else doc_name,
+                    "heading_path": path,
+                    "blocks": [],
+                    "content": "",
+                }
+
+            if current is None:
+                current = ChunkingService._new_section(doc_name)
+
+            # 标题只用于章节路径，正文块通过前缀携带标题上下文。
+            if block_data.get("type") == "heading":
+                continue
+
+            current["blocks"].append(
+                {
+                    "type": block_data.get("type") or "paragraph",
+                    "text": text,
+                }
+            )
+
+        flush_current()
+        return sections
 
     @staticmethod
     def _new_section(doc_name: str) -> dict:
@@ -547,6 +627,23 @@ class ChunkingService:
         """
         if not children:
             return []
+
+        total_tokens = sum(child.token_count for child in children)
+        soft_parent_limit = int(self.target_parent_tokens * 1.2)
+        if total_tokens <= soft_parent_limit:
+            parent_content = "\n\n".join(c.content for c in children)
+            return [
+                ParentChunk(
+                    parent_chunk_id=f"{article_id}_p0",
+                    article_id=article_id,
+                    content=parent_content,
+                    token_count=self._count_tokens(parent_content),
+                    child_chunk_ids=[c.chunk_id for c in children],
+                    doc_name=doc_name,
+                    source=source,
+                    url=url,
+                )
+            ]
 
         parents: list[ParentChunk] = []
         i = 0  # 子 chunk 游标

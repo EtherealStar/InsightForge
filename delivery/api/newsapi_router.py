@@ -164,12 +164,21 @@ def save_article(req: SaveArticleRequest):
                     # 分块 → 向量化
                     children, parents = chunking_service.chunk_article(saved_article)
                     if children:
+                        if parents:
+                            saved_parents = article_store.save_parent_chunks(parents)
+                            if isinstance(saved_parents, int) and saved_parents < len(parents):
+                                raise RuntimeError(
+                                    f"父 chunk 写入不完整: {saved_parents}/{len(parents)}"
+                                )
+
                         child_texts = [c.content for c in children]
                         embeddings = embedding_client.embed(child_texts)
-                        if embeddings:
-                            vector_store.add_chunks(children, embeddings)
-                            if parents:
-                                article_store.save_parent_chunks(parents)
+                        if embeddings and len(embeddings) == len(children):
+                            embedded_count = vector_store.add_chunks(children, embeddings)
+                            if embedded_count != len(children):
+                                raise RuntimeError(
+                                    f"子 chunk 写入不完整: {embedded_count}/{len(children)}"
+                                )
                             article_store.mark_embedded([saved_article.id])
                             vectorized = True
             except Exception:

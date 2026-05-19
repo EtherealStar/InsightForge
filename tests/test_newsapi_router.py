@@ -20,6 +20,7 @@ def _build_request(published_at: str = "2026-01-02T03:04:05Z") -> SaveArticleReq
 
 def test_save_article_success_and_vectorized(monkeypatch):
     store = MagicMock()
+    calls = []
     store.save_articles.return_value = 1
     store.get_articles.return_value = [
         Article(
@@ -31,11 +32,13 @@ def test_save_article_success_and_vectorized(monkeypatch):
             language=Language.EN,
         )
     ]
-    store.save_parent_chunks.return_value = 1
+    store.save_parent_chunks.side_effect = lambda parents: calls.append("parents") or len(parents)
     embedding_client = MagicMock()
-    embedding_client.embed.return_value = [[0.1, 0.2]]
+    embedding_client.embed.side_effect = lambda texts: calls.append("embeddings") or [[0.1, 0.2]]
     vector_store = MagicMock()
-    vector_store.add_chunks.return_value = 1
+    vector_store.add_chunks.side_effect = (
+        lambda chunks, embeddings: calls.append("children") or len(chunks)
+    )
 
     # Mock chunking service
     from models.chunk import Chunk, ParentChunk
@@ -63,6 +66,7 @@ def test_save_article_success_and_vectorized(monkeypatch):
     assert result["status"] == "ok"
     assert result["saved_count"] == 1
     assert result["vectorized"] is True
+    assert calls == ["parents", "embeddings", "children"]
     store.mark_embedded.assert_called_once_with([1])
 
 

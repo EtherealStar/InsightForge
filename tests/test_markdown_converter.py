@@ -518,3 +518,55 @@ class TestEndToEnd:
         assert "| 列 | 值 |" in article.content
         assert "> 引用" in article.content
         assert "```python\nprint('ok')\n```" in article.content
+
+    def test_attaches_semantic_blocks_for_chunking(self, converter):
+        """转换后应附加块级语义信息，供 ChunkingService 直接使用。"""
+        article = Article(
+            title="语义测试",
+            url="https://example.com",
+            content="导语\n\n## 事故原因\n\n设备老化导致风险上升。",
+            html_content="",
+        )
+
+        converter.convert_article(article)
+
+        assert article.semantic_page_type == "article"
+        assert article.semantic_skip_indexing is False
+        assert article.semantic_blocks
+        assert any(
+            block["type"] == "paragraph"
+            and block["heading_path"] == ["语义测试", "事故原因"]
+            and "设备老化" in block["text"]
+            for block in article.semantic_blocks
+        )
+
+    def test_listing_page_marked_skip_indexing(self, converter):
+        """明显的栏目/首页列表页不应进入向量化索引。"""
+        listing_markdown = "\n\n".join(
+            [
+                "## Top Stories",
+                "[Story 1](/news/1)",
+                "[Story 2](/news/2)",
+                "## More News",
+                "[Story 3](/news/3)",
+                "[Story 4](/news/4)",
+                "## Most Watched",
+                "[Video 1](/video/1)",
+                "[Video 2](/video/2)",
+                "## Also in News",
+                "[Story 5](/news/5)",
+                "## Recommended",
+                "[Story 6](/news/6)",
+            ]
+        )
+        article = Article(
+            title="BBC News",
+            url="https://www.bbc.com/news",
+            content=listing_markdown,
+            html_content="",
+        )
+
+        converter.convert_article(article)
+
+        assert article.semantic_page_type == "homepage"
+        assert article.semantic_skip_indexing is True

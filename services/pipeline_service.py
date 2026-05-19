@@ -97,7 +97,8 @@ class PipelineService:
         """
         result = {
             "fetched": 0, "new": 0, "summarized": 0, "summary_failed": 0,
-            "chunks": 0, "parent_chunks": 0, "embedded": 0, "errors": [],
+            "chunks": 0, "parent_chunks": 0, "embedded": 0,
+            "skipped_non_articles": 0, "errors": [],
         }
 
         # Step 1: 抓取（RSS + 网页爬取）
@@ -109,6 +110,8 @@ class PipelineService:
         if articles:
             try:
                 articles = self.md_converter.convert_batch(articles)
+                articles, skipped = self._filter_indexable_articles(articles)
+                result["skipped_non_articles"] += skipped
                 logger.info(f"[Pipeline] Markdown 转换完成: {len(articles)} 篇")
             except Exception as e:
                 msg = f"Markdown 转换阶段失败: {e}"
@@ -182,9 +185,9 @@ class PipelineService:
                     logger.warning("[Pipeline] 未配置分块服务，跳过向量化")
                     embedded_count = 0
 
-                self.article_store.mark_embedded(
-                    [a.id for a in pending if a.id is not None]
-                )
+                embedded_article_ids = result.pop("_embedded_article_ids", [])
+                if embedded_article_ids:
+                    self.article_store.mark_embedded(embedded_article_ids)
                 result["embedded"] = embedded_count
                 logger.info(f"[Pipeline] 向量化完成: {embedded_count} 个子 chunks")
             else:
@@ -239,7 +242,23 @@ class PipelineService:
                 f"子 chunk 写入不完整: {embedded_count}/{len(all_children)}"
             )
 
+        result["_embedded_article_ids"] = sorted(
+            {child.article_id for child in all_children if child.article_id}
+        )
         return embedded_count
+
+    @staticmethod
+    def _filter_indexable_articles(articles: list) -> tuple[list, int]:
+        """过滤转换器判定为非文章页的内容，避免污染向量库。"""
+        indexable = [
+            article
+            for article in articles
+            if not getattr(article, "semantic_skip_indexing", False)
+        ]
+        skipped = len(articles) - len(indexable)
+        if skipped:
+            logger.info(f"[Pipeline] 跳过 {skipped} 篇非文章/低质量页面")
+        return indexable, skipped
 
     def fetch_and_store(self) -> dict:
         """
@@ -247,7 +266,7 @@ class PipelineService:
         用于系统启动时快速拉取最新新闻。
         返回 {"fetched": int, "new": int, "errors": list[str]}
         """
-        result = {"fetched": 0, "new": 0, "errors": []}
+        result = {"fetched": 0, "new": 0, "skipped_non_articles": 0, "errors": []}
 
         articles, collect_errors = self._collect_all()
         result["fetched"] = len(articles)
@@ -259,6 +278,8 @@ class PipelineService:
         # Markdown 转换
         try:
             articles = self.md_converter.convert_batch(articles)
+            articles, skipped = self._filter_indexable_articles(articles)
+            result["skipped_non_articles"] += skipped
             logger.info(f"[FetchOnly] Markdown 转换完成: {len(articles)} 篇")
         except Exception as e:
             msg = f"Markdown 转换阶段失败: {e}"
