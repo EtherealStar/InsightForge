@@ -1,7 +1,8 @@
 """Markdown 感知的父子分块服务
 
-将 Markdown 格式的文章内容按章节结构拆分为子 chunk (≤512 token)，
-再组装为父 chunk (~1024 token)，子 chunk 明确归属一个父 chunk。
+将 Markdown 格式的 SourceDocument 按章节结构拆分为 Qdrant 子 chunk point
+(≤512 token)，再组装为 PostgreSQL 父 chunk (~1024 token)，子 chunk
+明确归属一个主父 chunk。
 
 分块策略：
 1. 先解析 Markdown block（标题、段落、列表、引用、表格、代码块）
@@ -15,11 +16,12 @@ from __future__ import annotations
 
 import structlog
 import re
+import hashlib
+from uuid import NAMESPACE_URL, uuid5
 
 import tiktoken
 
-from models.article import Article
-from models.chunk import Chunk, ParentChunk
+from models.document import ChildChunkPoint, ParentDocumentChunk, SourceDocument
 
 logger = structlog.get_logger(__name__)
 
@@ -49,43 +51,43 @@ class ChunkingService:
     # 公开 API
     # ------------------------------------------------------------------
 
-    def chunk_article(
-        self, article: Article
-    ) -> tuple[list[Chunk], list[ParentChunk]]:
-        """将一篇文章分块为子 chunks 和父 chunks。
+    def chunk_document(
+        self, document: SourceDocument
+    ) -> tuple[list[ChildChunkPoint], list[ParentDocumentChunk]]:
+        """将一篇文档分块为 Qdrant 子 points 和 PostgreSQL 父 chunks。
 
         Args:
-            article: 已转为 Markdown 格式的 Article (content 字段为 Markdown)。
+            document: 已标准化为 Markdown/text 的 SourceDocument。
 
         Returns:
             (children, parents) 元组。
         """
-        if not article.content or not article.content.strip():
+        if not document.content or not document.content.strip():
             return [], []
 
-        article_id = article.id or 0
-        doc_name = article.title or "Untitled"
-        source = article.source or ""
-        url = article.url or ""
+        document_id = document.document_id
+        doc_name = document.title or "Untitled"
+        source = document.source_type or ""
+        url = document.url or ""
 
-        if getattr(article, "semantic_skip_indexing", False):
+        if document.metadata.get("semantic_skip_indexing"):
             logger.info(f"跳过非文章页面分块: '{doc_name[:50]}'")
             return [], []
 
         sections = self._parse_sections(
-            article.content,
+            document.content,
             doc_name,
-            semantic_blocks=getattr(article, "semantic_blocks", None),
+            semantic_blocks=document.metadata.get("semantic_blocks"),
         )
         children = self._build_child_chunks(
-            sections, article_id, doc_name, source, url
+            sections, document, doc_name, source, url
         )
 
         if not children:
             return [], []
 
         parents = self._build_parent_chunks(
-            children, article_id, doc_name, source, url
+            children, document, doc_name, source, url
         )
 
         # 回填 parent_chunk_id
@@ -93,25 +95,25 @@ class ChunkingService:
 
         return children, parents
 
-    def chunk_articles(
-        self, articles: list[Article]
-    ) -> tuple[list[Chunk], list[ParentChunk]]:
+    def chunk_documents(
+        self, documents: list[SourceDocument]
+    ) -> tuple[list[ChildChunkPoint], list[ParentDocumentChunk]]:
         """批量分块，单篇失败不影响整批。"""
-        all_children: list[Chunk] = []
-        all_parents: list[ParentChunk] = []
+        all_children: list[ChildChunkPoint] = []
+        all_parents: list[ParentDocumentChunk] = []
 
-        for article in articles:
+        for document in documents:
             try:
-                children, parents = self.chunk_article(article)
+                children, parents = self.chunk_document(document)
                 all_children.extend(children)
                 all_parents.extend(parents)
             except Exception as e:
                 logger.warning(
-                    f"分块失败: '{article.title[:50]}' — {e}"
+                    f"分块失败: '{document.title[:50]}' — {e}"
                 )
 
         logger.info(
-            f"分块完成: {len(articles)} 篇文章 → "
+            f"分块完成: {len(documents)} 篇文档 → "
             f"{len(all_children)} 子 chunks + {len(all_parents)} 父 chunks"
         )
         return all_children, all_parents
@@ -392,11 +394,11 @@ class ChunkingService:
     def _build_child_chunks(
         self,
         sections: list[dict],
-        article_id: int,
+        document: SourceDocument,
         doc_name: str,
         source: str,
         url: str,
-    ) -> list[Chunk]:
+    ) -> list[ChildChunkPoint]:
         """从 sections 构建子 chunks (≤max_child_tokens)。
 
         - 若 section 不超过限制，直接成为一个子 chunk
@@ -414,18 +416,28 @@ class ChunkingService:
         # 转为 Chunk 对象
         children = []
         for i, rc in enumerate(merged):
+            content = rc["content"]
             children.append(
-                Chunk(
-                    chunk_id=f"{article_id}_c{i}",
-                    article_id=article_id,
+                ChildChunkPoint(
+                    point_id=self._point_id(document.document_id, i),
+                    document_id=document.document_id,
                     parent_chunk_id="",  # 稍后回填
-                    content=rc["content"],
+                    content=content,
                     token_count=rc["token_count"],
                     doc_name=doc_name,
                     heading_path=rc["heading_path"],
                     chunk_index=i,
                     source=source,
                     url=url,
+                    source_type=document.source_type,
+                    document_type=document.document_type,
+                    competitor_ids=list(document.competitor_ids),
+                    product_ids=list(document.product_ids),
+                    language=document.language,
+                    content_hash=self._hash_text(content),
+                    published_at=document.published_at,
+                    created_at=document.created_at,
+                    metadata=dict(document.metadata),
                 )
             )
 
@@ -610,12 +622,12 @@ class ChunkingService:
 
     def _build_parent_chunks(
         self,
-        children: list[Chunk],
-        article_id: int,
+        children: list[ChildChunkPoint],
+        document: SourceDocument,
         doc_name: str,
         source: str,
         url: str,
-    ) -> list[ParentChunk]:
+    ) -> list[ParentDocumentChunk]:
         """从子 chunks 组装父 chunks (~target_parent_tokens)。
 
         算法：
@@ -633,24 +645,33 @@ class ChunkingService:
         if total_tokens <= soft_parent_limit:
             parent_content = "\n\n".join(c.content for c in children)
             return [
-                ParentChunk(
-                    parent_chunk_id=f"{article_id}_p0",
-                    article_id=article_id,
+                ParentDocumentChunk(
+                    parent_chunk_id=f"{document.document_id}:p0",
+                    document_id=document.document_id,
                     content=parent_content,
                     token_count=self._count_tokens(parent_content),
-                    child_chunk_ids=[c.chunk_id for c in children],
+                    child_point_ids=[c.point_id for c in children],
+                    heading_path=list(children[0].heading_path if children else []),
                     doc_name=doc_name,
                     source=source,
                     url=url,
+                    source_type=document.source_type,
+                    document_type=document.document_type,
+                    competitor_ids=list(document.competitor_ids),
+                    product_ids=list(document.product_ids),
+                    language=document.language,
+                    published_at=document.published_at,
+                    created_at=document.created_at,
+                    metadata=dict(document.metadata),
                 )
             ]
 
-        parents: list[ParentChunk] = []
+        parents: list[ParentDocumentChunk] = []
         i = 0  # 子 chunk 游标
         parent_idx = 0
 
         while i < len(children):
-            group: list[Chunk] = []
+            group: list[ChildChunkPoint] = []
             group_tokens = 0
 
             # 贪心累加
@@ -665,15 +686,24 @@ class ChunkingService:
 
             # 组装父 chunk
             parent_content = "\n\n".join(c.content for c in group)
-            parent = ParentChunk(
-                parent_chunk_id=f"{article_id}_p{parent_idx}",
-                article_id=article_id,
+            parent = ParentDocumentChunk(
+                parent_chunk_id=f"{document.document_id}:p{parent_idx}",
+                document_id=document.document_id,
                 content=parent_content,
                 token_count=self._count_tokens(parent_content),
-                child_chunk_ids=[c.chunk_id for c in group],
+                child_point_ids=[c.point_id for c in group],
+                heading_path=list(group[0].heading_path if group else []),
                 doc_name=doc_name,
                 source=source,
                 url=url,
+                source_type=document.source_type,
+                document_type=document.document_type,
+                competitor_ids=list(document.competitor_ids),
+                product_ids=list(document.product_ids),
+                language=document.language,
+                published_at=document.published_at,
+                created_at=document.created_at,
+                metadata=dict(document.metadata),
             )
             parents.append(parent)
             parent_idx += 1
@@ -684,7 +714,7 @@ class ChunkingService:
 
             # 尝试用最后一个子 chunk 做 overlap
             last_child = group[-1]
-            if last_child.token_count <= self.overlap_tokens * 2:
+            if len(group) > 1 and last_child.token_count <= self.overlap_tokens * 2:
                 # 下一个父 chunk 从最后一个子 chunk 开始（overlap）
                 i = j - 1
             else:
@@ -694,7 +724,9 @@ class ChunkingService:
         return parents
 
     def _assign_parent_ids(
-        self, children: list[Chunk], parents: list[ParentChunk]
+        self,
+        children: list[ChildChunkPoint],
+        parents: list[ParentDocumentChunk],
     ) -> None:
         """为每个子 chunk 分配 parent_chunk_id。
 
@@ -704,32 +736,34 @@ class ChunkingService:
         assigned: set[str] = set()
 
         for parent in parents:
-            remaining_child_ids = []
-            for cid in parent.child_chunk_ids:
+            retained_point_ids = []
+            for cid in parent.child_point_ids:
                 if cid not in assigned:
                     assigned.add(cid)
-                    remaining_child_ids.append(cid)
+                    retained_point_ids.append(cid)
                     # 找到对应的子 chunk 并设置 parent_id
                     for child in children:
-                        if child.chunk_id == cid:
+                        if child.point_id == cid:
                             child.parent_chunk_id = parent.parent_chunk_id
                             break
-            # 更新父 chunk 的 child_chunk_ids 为实际归属的子 chunks
-            # 注意：parent.content 保持不变（包含 overlap 内容）
-            parent.child_chunk_ids = remaining_child_ids
+            # child_point_ids 保留完整父块内容关系，包括 overlap 共享子块；
+            # 子 point 的 parent_chunk_id 只指向第一个包含它的主父块。
+            if retained_point_ids:
+                parent.metadata = dict(parent.metadata)
+                parent.metadata["owned_child_point_ids"] = retained_point_ids
 
     def _handle_short_document(
         self,
         content: str,
         token_count: int,
-        article_id: int,
+        document_id: str,
         doc_name: str,
         source: str,
         url: str,
-    ) -> tuple[list[Chunk], list[ParentChunk]]:
+    ) -> tuple[list[ChildChunkPoint], list[ParentDocumentChunk]]:
         """处理短文档 (≤1024 token)：同时视为子 chunk 和父 chunk。"""
-        chunk_id = f"{article_id}_c0"
-        parent_id = f"{article_id}_p0"
+        chunk_id = self._point_id(document_id, 0)
+        parent_id = f"{document_id}:p0"
 
         # 解析标题路径
         heading_path = [doc_name]
@@ -739,9 +773,9 @@ class ChunkingService:
         chunk_content = self._format_child_content(content, heading_path)
         chunk_tokens = self._count_tokens(chunk_content)
 
-        child = Chunk(
-            chunk_id=chunk_id,
-            article_id=article_id,
+        child = ChildChunkPoint(
+            point_id=chunk_id,
+            document_id=document_id,
             parent_chunk_id=parent_id,
             content=chunk_content,
             token_count=chunk_tokens,
@@ -752,12 +786,12 @@ class ChunkingService:
             url=url,
         )
 
-        parent = ParentChunk(
+        parent = ParentDocumentChunk(
             parent_chunk_id=parent_id,
-            article_id=article_id,
+            document_id=document_id,
             content=chunk_content,
             token_count=chunk_tokens,
-            child_chunk_ids=[chunk_id],
+            child_point_ids=[chunk_id],
             doc_name=doc_name,
             source=source,
             url=url,
@@ -774,6 +808,15 @@ class ChunkingService:
         if not text:
             return 0
         return len(self._enc.encode(text))
+
+    @staticmethod
+    def _hash_text(text: str) -> str:
+        return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _point_id(document_id: str, chunk_index: int) -> str:
+        """Return a stable Qdrant-compatible UUID point id."""
+        return str(uuid5(NAMESPACE_URL, f"{document_id}:c:{chunk_index}"))
 
 
 def _normalize_path_text(text: str) -> str:

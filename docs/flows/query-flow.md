@@ -10,8 +10,12 @@
 
 | 端点 | 方式 | 用途 |
 |------|------|------|
-| `POST /api/query/ask` | SSE 流式 | 前端 QueryView 实时展示推理过程 |
-| `POST /api/query/ask-sync` | JSON 同步 | CLI / 非流式场景 |
+| `POST /api/query/stream` | SSE 流式 | 前端 QueryView 实时展示推理过程 |
+| `POST /api/query` | JSON 同步 | CLI / 非流式场景 |
+
+生产或启用认证时，前端 SSE 请求必须携带 `Authorization: Bearer <api_key>`，与普通 Axios JSON 请求使用同一 API Key。
+
+QueryView 将 thought/action/observation/error 等事件渲染为结构化事件列表，图标走本地 SVG。若 `generate_analysis_report` 工具结果包含 `report_id`，前端展示跳转 `/reports?report_id=...` 的动作，报告详情、质量和审批仍由 Reports 工作流承接。
 
 ---
 
@@ -31,7 +35,7 @@ sequenceDiagram
     participant Tool as BaseTool
     participant Parser as StreamingReActParser
 
-    User->>QR: POST /api/query/ask {question}
+    User->>QR: POST /api/query/stream {question}
     QR->>QS: answer_agent_stream(question)
     
     Note over QS: 1. 创建/获取会话
@@ -143,16 +147,23 @@ while steps < max_steps:
 
 ### 阶段 5: 工具执行
 
-ToolRegistry 线程安全单例，6 个内置工具：
+ToolRegistry 线程安全单例，内置工具通过 ToolSpec 注册表和 BuiltinToolFactory 创建，只接收 ServiceRegistry 白名单中的 service 依赖：
 
 | 工具名 | 功能 | 依赖 |
 |--------|------|------|
-| query_knowledge_base | 混合检索 RAG | HybridSearchService, PgVectorStore, PostgresArticleStore |
-| get_recent_news | 最近 N 小时新闻 | PostgresArticleStore |
-| get_news_stats | 新闻库统计 | PostgresArticleStore |
-| generate_brief | 生成新闻简报 | PostgresArticleStore, LLMClient |
-| read_article | 读取文章全文 | PostgresArticleStore |
-| web_search | 多引擎搜索 | WebSearchService (DuckDuckGo + Tavily) |
+| search_evidence | 带过滤下推的原文 evidence RAG 检索 | EvidenceSearchService / HybridSearchService |
+| query_intel_facts | 查询结构化 facts | IntelService |
+| get_intel_fact | 获取 fact 详情与 evidence | IntelService |
+| create_intel_fact / update_intel_fact | 创建或修改非 active fact | IntelService |
+| link_fact_to_competitor / link_fact_to_product | 维护 fact 归因 | IntelService |
+| create_insight_claim / query_insight_claims | 创建 draft claim、查询 claims | InsightService |
+| web_search | 多引擎搜索 | WebSearchService (DuckDuckGo + Tavily + NewsAPI) |
+| list_competitors | 列出竞品 | CompetitorService |
+| get_competitor_profile | 获取竞品档案和 fact 聚合 | CompetitorService |
+| compare_competitors | 基于 facts/events 横向对比 | CompetitorService |
+| generate_analysis_report | 基于 fact/evidence/claim 上下文生成报告 | ReportService |
+
+当前运行时注册表包含 14 个 active 工具；旧 news/article/brief 工具定义已删除，不保留 removed placeholder。所有 active 工具实例均由 `BuiltinToolFactory` 从 `ServiceRegistry` 白名单解析 service 依赖创建。
 
 每个工具继承 BaseTool，执行流程：validate_params() -> _run(**validated) -> ToolResult。
 
@@ -161,7 +172,7 @@ ToolRegistry 线程安全单例，6 个内置工具：
 ```json
 data: {"event_type": "llm_delta", "content": "Thought:", "run_id": "...", "sequence": 1}
 data: {"event_type": "thought", "content": "用户想了解AI新闻...", "step_index": 1}
-data: {"event_type": "action_start", "tool_name": "query_knowledge_base", ...}
+data: {"event_type": "action_start", "tool_name": "search_evidence", ...}
 data: {"event_type": "action_result", "content": "找到 5 条相关文章..."}
 data: {"event_type": "answer_delta", "content": "根据搜索结果，"}
 data: {"event_type": "answer", "content": "根据搜索结果，最近的AI新闻..."}
@@ -208,7 +219,7 @@ ReActAgent 在日志中自动脱敏：
 
 ## 相关文档
 
-- [search-flow.md](search-flow.md) — query_knowledge_base 检索链路
+- [search-flow.md](search-flow.md) — search_evidence 检索链路
 - [memory-flow.md](memory-flow.md) — 会话记忆压缩与持久记忆提取
 - [deep-research-flow.md](deep-research-flow.md) — 深度研究模式
 - [ARCHITECTURE.md](../../ARCHITECTURE.md) §6 — Agent 智能体层

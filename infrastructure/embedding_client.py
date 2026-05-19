@@ -13,11 +13,18 @@ _BATCH_SIZE = 50
 class OpenAICompatibleEmbeddingClient:
     """实现 EmbeddingClientProtocol，调用 OpenAI 格式自定义 Embedding API"""
 
-    def __init__(self, api_key: str, base_url: str, model: str):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        dimensions: int | None = None,
+    ):
         import openai
 
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
+        self.dimensions = dimensions if dimensions and dimensions > 0 else None
 
     @with_retry(max_retries=2)
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -34,8 +41,11 @@ class OpenAICompatibleEmbeddingClient:
         for i in range(0, len(texts), _BATCH_SIZE):
             batch = texts[i : i + _BATCH_SIZE]
             try:
+                request = {"model": self.model, "input": batch}
+                if self.dimensions is not None:
+                    request["dimensions"] = self.dimensions
                 response = self.client.embeddings.create(
-                    model=self.model, input=batch
+                    **request
                 )
                 # 按 index 排序确保顺序一致
                 sorted_data = sorted(response.data, key=lambda x: x.index)
@@ -46,5 +56,8 @@ class OpenAICompatibleEmbeddingClient:
                     f"Embedding API 调用失败（批次 {i}）: {e}"
                 ) from e
 
-        logger.info(f"Embedding: 生成 {len(all_embeddings)} 个向量")
+        logger.info(
+            f"Embedding: 生成 {len(all_embeddings)} 个向量"
+            + (f" (dimensions={self.dimensions})" if self.dimensions else "")
+        )
         return all_embeddings

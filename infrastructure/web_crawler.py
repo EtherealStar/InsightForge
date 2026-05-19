@@ -177,7 +177,8 @@ class WebCrawler:
     5. 返回 list[Article]
     """
 
-    MIN_CONTENT_LENGTH = 100
+    MIN_CHINESE_CHARACTERS = 1000
+    MIN_UTF8_BYTES = 3000
 
     def __init__(
         self,
@@ -186,6 +187,16 @@ class WebCrawler:
     ):
         self.max_pages = max_pages
         self.max_concurrency = max_concurrency
+
+    @classmethod
+    def _meets_content_threshold(cls, text: str) -> bool:
+        """正文至少要足够长的中文内容，才视为有效文章。"""
+        if not text:
+            return False
+
+        chinese_count = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+        utf8_length = len(text.encode("utf-8"))
+        return chinese_count >= cls.MIN_CHINESE_CHARACTERS and utf8_length >= cls.MIN_UTF8_BYTES
 
     async def _crawl(
         self,
@@ -244,7 +255,7 @@ class WebCrawler:
                     if h1_text and len(h1_text) > len(title):
                         title = h1_text
 
-                if full_text and len(full_text) >= self.MIN_CONTENT_LENGTH and title:
+                if full_text and self._meets_content_threshold(full_text) and title:
                     canonical_url = _canonicalize_url(url)
                     language = _detect_language(title + full_text)
                     article = Article(

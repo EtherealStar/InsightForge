@@ -16,21 +16,23 @@ import uuid
 import time
 import structlog
 
+from delivery.api.auth_router import router as auth_router
 from delivery.api.config_router import router as config_router
 from delivery.api.settings_router import router as settings_router
-from delivery.api.news_router import router as news_router
-from delivery.api.brief_router import router as brief_router
 from delivery.api.query_router import router as query_router
-from delivery.api.newsapi_router import router as newsapi_router
 from delivery.api.webhook_router import router as webhook_router
 from delivery.api.research_router import router as research_router
 from delivery.api.tasks_router import router as tasks_router
 from delivery.api.memory_router import router as memory_router
+from delivery.api.competitor_router import router as competitor_router
+from delivery.api.report_router import router as report_router
+from delivery.api.intel_router import router as intel_router
+from delivery.api.insight_router import router as insight_router
 
 app = FastAPI(
-    title="Logos — AI 新闻分析助手",
-    description="个人 AI 新闻分析助手 API",
-    version="1.0.0",
+    title="InsightForge — AI 竞品分析助手",
+    description="AI 驱动的竞品分析助手 API",
+    version="2.0.0",
 )
 
 # CORS — 开发模式允许 Vite dev server
@@ -45,6 +47,7 @@ app.add_middleware(
 @app.middleware("http")
 async def structlog_middleware(request: Request, call_next):
     request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(
         request_id=request_id,
@@ -72,16 +75,18 @@ async def structlog_middleware(request: Request, call_next):
         raise
 
 # 注册 API 路由
+app.include_router(auth_router)
 app.include_router(config_router)
 app.include_router(settings_router)
-app.include_router(news_router)
-app.include_router(brief_router)
 app.include_router(query_router)
-app.include_router(newsapi_router)
 app.include_router(webhook_router)
 app.include_router(research_router)
 app.include_router(tasks_router)
 app.include_router(memory_router)
+app.include_router(competitor_router)
+app.include_router(report_router)
+app.include_router(intel_router)
+app.include_router(insight_router)
 
 # 生产模式：挂载 Vue 构建产物
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -105,11 +110,10 @@ if os.path.exists(_STATIC_DIR):
 def startup_register_tools():
     """应用启动时注册内置 Agent 工具。"""
     try:
-        from agent.tools.builtin import register_builtin_tools
         from core.config_manager import get_config_manager
 
         mgr = get_config_manager()
-        count = register_builtin_tools(mgr)
+        count = mgr.bootstrap_builtin_tools(refresh=True)
         print(f" 已注册 {count} 个内置 Agent 工具")
     except Exception as e:
         # 工具注册失败不阻止服务启动
@@ -118,7 +122,74 @@ def startup_register_tools():
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "message": "Logos 后端运行中"}
+    from core.config_manager import get_config_manager
+
+    mgr = get_config_manager()
+    config = mgr.config
+    checks = {
+        "config": {
+            "status": "ok",
+            "app_env": config.app_env,
+            "auth_enabled": config.auth_enabled,
+        },
+        "auth": {
+            "status": "ok"
+            if config.app_env != "production" or config.auth_enabled
+            else "unhealthy",
+        },
+        "postgres": {"status": "unknown"},
+        "redis": {"status": "unknown"},
+        "qdrant": {"status": "unknown"},
+    }
+    if config.app_env == "production":
+        missing = []
+        if not config.auth_enabled:
+            missing.append("AUTH_ENABLED")
+        if "@" not in config.celery_broker_url or "@" not in config.celery_result_backend:
+            missing.append("REDIS_PASSWORD")
+        if missing:
+            checks["config"] = {
+                "status": "unhealthy",
+                "missing": missing,
+                "app_env": config.app_env,
+                "auth_enabled": config.auth_enabled,
+            }
+
+    try:
+        store = mgr.document_store
+        with store._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        checks["postgres"]["status"] = "ok"
+    except Exception as exc:
+        checks["postgres"] = {"status": "unhealthy", "error": str(exc)}
+
+    try:
+        redis_store = mgr.redis_state_store
+        if hasattr(redis_store, "healthcheck") and not redis_store.healthcheck():
+            raise RuntimeError("Redis healthcheck returned false")
+        checks["redis"]["status"] = "ok"
+    except Exception as exc:
+        checks["redis"] = {"status": "unhealthy", "error": str(exc)}
+
+    try:
+        index = mgr.vector_index
+        if hasattr(index, "healthcheck"):
+            index.healthcheck()
+        checks["qdrant"]["status"] = "ok"
+    except Exception as exc:
+        checks["qdrant"] = {"status": "unhealthy", "error": str(exc)}
+
+    overall = (
+        "unhealthy"
+        if any(check.get("status") == "unhealthy" for check in checks.values())
+        else "ok"
+    )
+    return {
+        "status": overall,
+        "message": "InsightForge 后端运行中",
+        "checks": checks,
+    }
 
 
 def main():
@@ -136,7 +207,7 @@ def main():
         logger.handlers.clear()
         logger.propagate = True
 
-    print("\n Logos — AI 新闻分析助手")
+    print("\n InsightForge — AI 竞品分析助手")
     print("=" * 40)
 
     # 检查是否有前端构建产物

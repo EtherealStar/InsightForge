@@ -11,9 +11,12 @@
 import asyncio
 import time
 import pytest
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 from typing import Any
 
 from agent.tools.base import BaseTool, ToolParameter, ToolResult
+from agent.tools.builtin import register_builtin_tools
 from agent.tools.registry import ToolRegistry, get_tool_registry
 from agent.tools.chain import ToolChain, ToolChainResult
 from agent.tools.executor import AsyncToolExecutor, ToolCall
@@ -413,6 +416,152 @@ class TestToolRegistry:
         r1 = get_tool_registry()
         r2 = get_tool_registry()
         assert r1 is r2
+
+    def test_register_builtin_tools_refreshes_instances(self, clean_registry):
+        registry = clean_registry
+        service_registry = MagicMock()
+        service_registry.has.return_value = True
+        service_registry.require.side_effect = lambda name: MagicMock(name=name)
+        config_manager = SimpleNamespace(
+            service_registry=service_registry,
+        )
+
+        first_count = register_builtin_tools(config_manager, refresh=True)
+        first_web_search = registry.get("web_search")
+
+        second_count = register_builtin_tools(config_manager, refresh=True)
+        second_web_search = registry.get("web_search")
+
+        assert first_count == 14
+        assert second_count == 14
+        assert first_web_search is not second_web_search
+        assert set(registry.list_names()) == {
+            "search_evidence",
+            "query_intel_facts",
+            "get_intel_fact",
+            "create_intel_fact",
+            "update_intel_fact",
+            "link_fact_to_competitor",
+            "link_fact_to_product",
+            "create_insight_claim",
+            "query_insight_claims",
+            "web_search",
+            "list_competitors",
+            "get_competitor_profile",
+            "compare_competitors",
+            "generate_analysis_report",
+        }
+
+    def test_builtin_tool_definitions_do_not_keep_legacy_tools(self):
+        from agent.tools.builtin.definitions import create_builtin_tool_definition_registry
+
+        definition_registry = create_builtin_tool_definition_registry()
+
+        assert "search_evidence" in definition_registry.active_tool_names()
+        assert definition_registry.removed_tool_names() == []
+        assert not {
+            "query_knowledge_base",
+            "get_recent_news",
+            "get_news_stats",
+            "read_article",
+            "generate_brief",
+        } & set(definition_registry.active_tool_names())
+
+    def test_builtin_tool_factory_skips_missing_service(self):
+        from agent.tools.builtin.definitions import create_builtin_tool_definition_registry
+        from agent.tools.builtin.factory import BuiltinToolFactory
+        from services.service_registry import ServiceRegistry
+
+        definition_registry = create_builtin_tool_definition_registry()
+        factory = BuiltinToolFactory(ServiceRegistry({"intel_service": object()}))
+
+        assert factory.create(definition_registry.get("query_intel_facts")) is not None
+        assert factory.create(definition_registry.get("search_evidence")) is None
+
+    def test_search_evidence_passes_filters_to_hybrid_service(self):
+        from agent.tools.builtin.search_evidence import SearchEvidenceTool
+        from models.document import HybridDocumentSearchResult, ParentDocumentChunk
+
+        service = MagicMock()
+        service.search.return_value = [
+            HybridDocumentSearchResult(
+                parent_chunk=ParentDocumentChunk(
+                    parent_chunk_id="p1",
+                    document_id="doc1",
+                    content="Cursor released a new feature.",
+                    token_count=10,
+                    child_point_ids=["c1"],
+                    doc_name="Doc",
+                    url="https://example.com",
+                ),
+                rrf_score=0.3,
+                match_sources=["semantic"],
+            )
+        ]
+        result = SearchEvidenceTool(service).execute(
+            query="Cursor feature",
+            top_k=3,
+            competitor_ids=[1],
+            document_type="article",
+            date_from="2026-01-01",
+            date_to="2026-01-31",
+        )
+
+        assert result.success is True
+        service.search.assert_called_once_with(
+            query="Cursor feature",
+            top_k=3,
+            filters={
+                "competitor_ids": [1],
+                "document_type": "article",
+                "date_from": "2026-01-01",
+                "date_to": "2026-01-31",
+            },
+        )
+
+    def test_search_evidence_rejects_invalid_date_without_calling_service(self):
+        from agent.tools.builtin.search_evidence import SearchEvidenceTool
+
+        service = MagicMock()
+        result = SearchEvidenceTool(service).execute(
+            query="Cursor",
+            date_from="2026/01/01",
+        )
+
+        assert result.success is False
+        service.search.assert_not_called()
+
+    def test_generate_analysis_report_tool_delegates_to_report_service(self):
+        from agent.tools.builtin.generate_analysis_report import GenerateAnalysisReportTool
+
+        report_service = MagicMock()
+        report_service.generate_analysis_report.return_value = {
+            "report_id": 7,
+            "status": "waiting_review",
+            "review_status": "passed",
+        }
+
+        result = GenerateAnalysisReportTool(report_service).execute(
+            competitor_ids=["1", 2],
+            report_type="comparison",
+            focus="pricing",
+            dimensions=["product"],
+            date_from="2026-01-01",
+            date_to="2026-01-31",
+            auto_publish=True,
+        )
+
+        assert result.success is True
+        assert result.data["status"] == "waiting_review"
+        report_service.generate_analysis_report.assert_called_once_with(
+            [1, 2],
+            report_type="comparison",
+            focus="pricing",
+            dimensions=["product"],
+            date_from="2026-01-01",
+            date_to="2026-01-31",
+            auto_publish=True,
+        )
 
 
 # ======================================================================

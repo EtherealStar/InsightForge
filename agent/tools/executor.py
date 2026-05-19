@@ -62,17 +62,17 @@ class AsyncToolExecutor:
         executor = AsyncToolExecutor()
 
         # 单个工具
-        result = await executor.execute("search_news", query="AI")
+        result = await executor.execute("search_evidence", query="AI")
 
         # 批量并发
         results = await executor.execute_batch([
-            ToolCall("search_news", {"query": "AI"}),
-            ToolCall("get_news_stats"),
+            ToolCall("search_evidence", {"query": "AI"}),
+            ToolCall("query_intel_facts", {"competitor_ids": [1]}),
         ])
 
         # 带超时
         result = await executor.execute_with_timeout(
-            "search_news", timeout=10.0, query="AI"
+            "search_evidence", timeout=10.0, query="AI"
         )
 
         # 用完关闭

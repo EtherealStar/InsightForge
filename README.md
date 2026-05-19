@@ -1,11 +1,11 @@
-# Logos — 个人 AI 新闻分析助手
+# InsightForge — AI 竞品分析助手
 
-一个运行在本地的个人 AI 新闻分析助手，具备以下核心能力：
+一个运行在本地的 AI 竞品分析助手，具备以下核心能力：
 
-1. **定时 Pipeline**：自动从多个新闻来源（RSS + 网页爬取）抓取内容，Markdown 转换、AI 摘要、父子分块向量化后存储，定时生成新闻简报。
-2. **ReAct Agent 问答**：自然语言提问，Agent 自主推理并调用工具（混合检索、统计查询、Web 搜索等），基于真实数据生成回答。
-3. **深度研究**：多步研究模式，自动保存研究报告。
-4. **Webhook 推送**：将简报/报告推送到飞书、钉钉、企业微信、Telegram、ntfy 等平台。
+1. **情报 Pipeline**：自动从 RSS/网页抓取内容，Markdown 转换、文档入库、父子分块、Qdrant 向量化，并抽取结构化竞品事实与证据。
+2. **ReAct Agent 问答**：自然语言提问，Agent 调用混合检索、竞品查询、报告生成和 Web 搜索等工具。
+3. **竞品与报告**：管理竞品档案、产品线、关联情报和结构化分析报告；报告生成后会绑定证据、运行质量门禁并进入审批发布流程。
+4. **深度研究与推送**：多步研究模式自动保存报告，并可推送到飞书、钉钉、企业微信、Telegram、ntfy。
 
 ## 快速开始
 
@@ -40,14 +40,14 @@ cd ..
 start_dev.bat
 ```
 
-> 脚本会自动启动 Docker Compose 基础设施 + FastAPI 后端 + Celery Worker + Celery Beat + Flower 监控 + Vue 前端，共 6 个服务。
+> 脚本会自动启动 Docker Compose 基础设施 + FastAPI 后端 + Celery Worker + Celery Beat + Vue 前端。
 
-浏览器访问 **http://localhost:5173** （前端支持热更新 HMR）
+浏览器访问 **http://localhost:5173** （前端支持热更新 HMR，默认进入 `/dashboard` 工作台）
 
 #### 方式 B：手动分布启动
 
 ```bash
-# 启动基础设施 (PostgreSQL + pgvector + Redis)
+# 启动基础设施 (PostgreSQL + Redis + Qdrant)
 docker compose up -d
 
 # 终端 1 — FastAPI 后端 (:8005)
@@ -62,8 +62,6 @@ celery -A scheduler.celery_app worker -l info -P threads
 # 终端 4 — Celery Beat
 celery -A scheduler.celery_app beat -l info
 
-# 终端 5 (可选) — Flower 监控 (http://localhost:5555)
-celery -A scheduler.celery_app flower --port=5555
 ```
 
 #### 方式 C：生产模式
@@ -80,11 +78,13 @@ python -m delivery.server
 
 ```bash
 cp .env.deploy.example .env
-# 编辑 .env：填写 CADDY_DOMAIN、BASIC_AUTH_USER、BASIC_AUTH_HASH、POSTGRES_PASSWORD 和各类 API Key
+# 编辑 .env：填写 CADDY_DOMAIN、BASIC_AUTH_USER、BASIC_AUTH_HASH、POSTGRES_PASSWORD、REDIS_PASSWORD、APP_ENV、AUTH_ENABLED 和各类 API Key
+BASIC_AUTH_HASH=dummy docker compose --env-file .env.deploy.example -f docker-compose.prod.yml config
 docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml run --rm web python -m delivery.cli auth create-key --name initial-admin --role admin
 ```
 
-生产编排会启动 PostgreSQL/pgvector、Redis、一次性数据库初始化、FastAPI、Celery Worker、Celery Beat 和 Caddy。公网只暴露 Caddy 的 80/443，站点默认启用 Basic Auth。
+生产编排会启动 PostgreSQL 16、带密码的 Redis、Qdrant、一次性数据库初始化、FastAPI、Celery Worker、Celery Beat 和 Caddy。公网只暴露 Caddy 的 80/443，站点默认启用 Basic Auth；后端 API 还会使用应用级 API Key 做 viewer/analyst/admin 角色授权，配置修改和报告发布会写审计。
 
 详细步骤见 [docs/deployment/docker-vps.md](docs/deployment/docker-vps.md)。
 
@@ -92,23 +92,23 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 ```bash
 python -m delivery.cli pipeline        # 手动执行 Pipeline
-python -m delivery.cli brief           # 手动生成日报
-python -m delivery.cli ask "今天有什么重要新闻？"
-python -m delivery.cli stats           # 查看数据库统计
-python -m delivery.cli cleanup         # 手动清理旧文章
+python -m delivery.cli ask "Cursor 和 Windsurf 有什么区别？"
+python -m delivery.cli auth create-key --name analyst --role analyst
 ```
 
 ## 前端功能
 
 | 页面 | 说明 |
 |---|---|
-|  新闻展示 | 浏览抓取的新闻，按来源/语言筛选，点击查看全文 |
-|  新闻简报 | 查看 AI 生成的新闻简报，支持一键生成 |
-|  智能问答 | ReAct Agent 流式问答，推理过程可视化 |
-|  在线搜索 | NewsAPI 全球新闻搜索 + 热门头条 |
+| Dashboard 工作台 | 竞品数量、7 日 facts、待处理报告、最近本地任务和系统健康总览 |
+|  竞品管理 | 竞品档案、产品线、关联情报和自动关联 |
+|  情报列表 | 浏览结构化 facts、状态、类型、维度和 evidence refs |
+|  分析报告 | 查看结构化报告、质量门禁、证据和审计，按角色审批/发布 |
+|  智能分析 | ReAct Agent 流式问答，推理过程可视化 |
+|  记忆管理 | 核心记忆与持久记忆管理 |
 |  Webhook | 推送渠道管理、测试、自动推送 |
 |  功能设置 | RSS/爬虫源管理、调度参数配置 |
-|  API 配置 | LLM/Embedding/Rerank/搜索引擎配置 |
+|  API 配置 | LLM/Embedding/Rerank/Judge/搜索引擎配置和配置审计（admin） |
 
 ## 项目结构
 
@@ -120,7 +120,7 @@ Logos/
 ├── services/        # 应用服务层（业务编排）
 ├── agent/           # Agent 智能体层（ReAct + 工具系统）
 ├── delivery/        # 表现层
-│   ├── api/         #   FastAPI REST API (9 个路由模块)
+│   ├── api/         #   FastAPI REST API (11 个路由模块)
 │   ├── server.py    #   FastAPI 服务入口
 │   └── cli.py       #   CLI 调试工具
 ├── scheduler/       # 调度层 (Celery + Redis)
@@ -136,8 +136,8 @@ Logos/
 - **后端**: Python 3.11+ / FastAPI / Uvicorn
 - **前端**: Vue 3 + Vite 6 + Vue Router + Axios
 - **AI**: OpenAI / Gemini / Claude 多后端 + Embedding + 可选 Rerank
-- **存储**: PostgreSQL 16 + pgvector (文章+父chunk+子chunk向量+全文索引)
-- **检索**: 向量+关键词 RRF 混合检索 + jieba 中文分词
+- **存储**: PostgreSQL 16（文档元数据、父块、全文索引、point 状态）+ Qdrant（子块向量、正文 payload、检索 metadata）
+- **检索**: Qdrant 子块语义检索 + PostgreSQL 父块全文搜索 + RRF + jieba 中文分词
 - **任务**: Celery + Redis (分布式异步 + Beat 定时)
 - **日志**: structlog (结构化 JSON)
 - **容器**: Docker Compose (VPS 生产编排 + 本地基础设施)

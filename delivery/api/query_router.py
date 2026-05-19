@@ -2,11 +2,13 @@
 import json
 import uuid
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/api/query", tags=["query"])
+from delivery.auth import require_analyst
+
+router = APIRouter(prefix="/api/query", tags=["query"], dependencies=[Depends(require_analyst)])
 logger = structlog.get_logger(__name__)
 
 

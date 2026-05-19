@@ -1,11 +1,12 @@
 """记忆系统 API。"""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from delivery.auth import require_analyst, require_viewer
 from models.memory import CoreMemoryKind, MemoryStatus, MemoryType
 
-router = APIRouter(prefix="/api/memory", tags=["memory"])
+router = APIRouter(prefix="/api/memory", tags=["memory"], dependencies=[Depends(require_viewer)])
 
 
 class CoreMemoryRequest(BaseModel):
@@ -44,7 +45,7 @@ def list_core_memories(kind: CoreMemoryKind | None = None):
     }
 
 
-@router.post("/core")
+@router.post("/core", dependencies=[Depends(require_analyst)])
 def create_core_memory(req: CoreMemoryRequest):
     store = _get_memory_store()
     item = store.create_core_memory_revision(
@@ -82,7 +83,7 @@ def list_persistent_memories(
     }
 
 
-@router.post("/persistent")
+@router.post("/persistent", dependencies=[Depends(require_analyst)])
 def create_persistent_memory(req: PersistentMemoryRequest):
     store = _get_memory_store()
     item = store.create_persistent_memory(
@@ -97,7 +98,7 @@ def create_persistent_memory(req: PersistentMemoryRequest):
     return item.to_dict()
 
 
-@router.put("/persistent/{memory_id}/status")
+@router.put("/persistent/{memory_id}/status", dependencies=[Depends(require_analyst)])
 def update_persistent_memory_status(memory_id: str, req: MemoryStatusRequest):
     try:
         item = _get_memory_store().update_persistent_memory_status(
@@ -109,7 +110,7 @@ def update_persistent_memory_status(memory_id: str, req: MemoryStatusRequest):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.delete("/persistent/{memory_id}")
+@router.delete("/persistent/{memory_id}", dependencies=[Depends(require_analyst)])
 def delete_persistent_memory(memory_id: str):
     try:
         _get_memory_store().delete_persistent_memory(memory_id)

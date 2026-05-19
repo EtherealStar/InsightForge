@@ -3,9 +3,9 @@
 # 只容器化基础设施服务，应用代码在本地 .venv 中运行
 
 services:
-  # PostgreSQL + pgvector — 文章 + 父/子 chunk + 向量 + 全文搜索
+  # PostgreSQL — authoritative metadata, parent chunks, FTS, tasks
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16
     platform: linux/amd64
     container_name: logos-postgres
     ports:
@@ -39,6 +39,23 @@ services:
       timeout: 3s
       retries: 5
 
+  # Qdrant — child chunk vectors and payload metadata
+  qdrant:
+    image: qdrant/qdrant:latest
+    platform: linux/amd64
+    container_name: logos-qdrant
+    ports:
+      - "16333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   postgres_data:
   redis_data:
+  qdrant_data:

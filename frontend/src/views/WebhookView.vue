@@ -2,16 +2,18 @@
   <div class="webhook-view">
     <div class="page-header">
       <div>
-        <h1> 消息推送</h1>
-        <p class="subtitle">管理 Webhook 推送渠道，将新闻简报推送到各平台</p>
+        <h1><SvgIcon name="webhook" :size="24" /> 消息推送</h1>
+        <p class="subtitle">管理 Webhook 推送渠道，将分析报告和竞品情报推送到各平台</p>
       </div>
-      <div class="header-actions">
+      <div v-if="isAdmin" class="header-actions">
         <button class="btn" @click="pushAll" :disabled="pushing">
           <span v-if="pushing" class="spinner"></span>
-          {{ pushing ? '推送中...' : ' 推送最新简报' }}
+          <SvgIcon v-else name="publish" :size="16" />
+          {{ pushing ? '推送中...' : '推送最新报告' }}
         </button>
         <button class="btn btn-primary" @click="openAddModal">
-          + 添加渠道
+          <SvgIcon name="plus" :size="16" />
+          添加渠道
         </button>
       </div>
     </div>
@@ -20,10 +22,10 @@
     <section class="card auto-push-section">
       <div class="auto-push-row">
         <div class="auto-push-info">
-          <h3> 自动推送</h3>
-          <p class="auto-push-desc">开启后，生成新闻简报时将自动推送到所有已启用的渠道</p>
+          <h3>自动推送</h3>
+          <p class="auto-push-desc">开启后，发布分析报告时将自动推送到所有已启用的渠道</p>
         </div>
-        <label class="toggle-switch">
+        <label v-if="isAdmin" class="toggle-switch">
           <input type="checkbox" v-model="autoPush" @change="toggleAutoPush" />
           <span class="toggle-slider"></span>
         </label>
@@ -40,13 +42,13 @@
       >
         <div class="channel-header">
           <div class="channel-identity">
-            <span class="platform-icon">{{ getPlatformIcon(ch.platform) }}</span>
+            <span class="platform-icon"><SvgIcon :name="getPlatformIcon(ch.platform)" :size="24" /></span>
             <div>
               <h3 class="channel-name">{{ ch.name }}</h3>
               <span class="platform-badge">{{ getPlatformName(ch.platform) }}</span>
             </div>
           </div>
-          <label class="toggle-switch toggle-sm">
+          <label v-if="isAdmin" class="toggle-switch toggle-sm">
             <input
               type="checkbox"
               :checked="ch.enabled"
@@ -59,11 +61,11 @@
         <div class="channel-detail">
           <div class="detail-row" v-if="ch.webhook_url">
             <span class="detail-label">Webhook</span>
-            <span class="detail-value mono">{{ ch.webhook_url }}</span>
+            <span class="detail-value mono">{{ maskSecret(ch.webhook_url) }}</span>
           </div>
           <div class="detail-row" v-if="ch.platform === 'telegram'">
             <span class="detail-label">Bot Token</span>
-            <span class="detail-value mono">{{ ch.bot_token }}</span>
+            <span class="detail-value mono">{{ maskSecret(ch.bot_token) }}</span>
           </div>
           <div class="detail-row" v-if="ch.platform === 'telegram'">
             <span class="detail-label">Chat ID</span>
@@ -79,20 +81,23 @@
           </div>
         </div>
 
-        <div class="channel-actions">
+        <div v-if="isAdmin" class="channel-actions">
           <button
             class="btn btn-sm"
             @click="testChannel(ch)"
             :disabled="testingId === ch.id"
             title="发送测试消息"
           >
-            {{ testingId === ch.id ? '发送中...' : ' 测试' }}
+            <SvgIcon name="refresh" :size="14" />
+            {{ testingId === ch.id ? '发送中...' : '测试' }}
           </button>
           <button class="btn btn-sm" @click="openEditModal(ch)" title="编辑">
-             编辑
+            <SvgIcon name="edit" :size="14" />
+            编辑
           </button>
           <button class="btn btn-sm btn-danger" @click="deleteChannel(ch)" title="删除">
-            
+            <SvgIcon name="delete" :size="14" />
+            删除
           </button>
         </div>
       </div>
@@ -100,11 +105,11 @@
 
     <!-- 空状态 -->
     <div v-else class="card empty-state">
-      <span class="emoji"></span>
       <p>暂无推送渠道</p>
       <p>点击「添加渠道」配置飞书、钉钉、企业微信、Telegram 或 ntfy</p>
-      <button class="btn btn-primary" @click="openAddModal" style="margin-top: var(--space-md)">
-        + 添加第一个渠道
+      <button v-if="isAdmin" class="btn btn-primary" @click="openAddModal" style="margin-top: var(--space-md)">
+        <SvgIcon name="plus" :size="16" />
+        添加第一个渠道
       </button>
     </div>
 
@@ -126,14 +131,14 @@
               :class="{ active: form.platform === p.id }"
               @click="selectPlatform(p.id)"
             >
-              <span class="platform-opt-icon">{{ p.icon }}</span>
+              <span class="platform-opt-icon"><SvgIcon :name="getPlatformIcon(p.id)" :size="20" /></span>
               <span class="platform-opt-name">{{ p.name }}</span>
             </button>
           </div>
 
           <!-- 配置帮助 -->
           <div class="platform-help" v-if="currentPlatformHelp">
-            <span class="help-icon"></span>
+            <SvgIcon name="evidence" :size="16" />
             <span>{{ currentPlatformHelp }}</span>
           </div>
 
@@ -170,7 +175,7 @@
               </div>
               <div class="form-group">
                 <label class="form-label">Topic</label>
-                <input v-model="form.topic" class="input" placeholder="my-news-brief" />
+                <input v-model="form.topic" class="input" placeholder="my-intel-report" />
               </div>
             </template>
           </div>
@@ -195,6 +200,8 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { webhookApi } from '../api'
+import { hasRole } from '../auth'
+import SvgIcon from '../components/icons/SvgIcon.vue'
 
 const channels = ref([])
 const platforms = ref([])
@@ -204,6 +211,7 @@ const testingId = ref(null)
 const modalOpen = ref(false)
 const editingChannel = ref(null)
 const toast = ref({ show: false, message: '', type: 'info' })
+const isAdmin = computed(() => hasRole('admin'))
 
 const defaultForm = () => ({
   name: '',
@@ -224,12 +232,20 @@ function showToast(message, type = 'info') {
 
 // ========== 平台信息 ==========
 function getPlatformIcon(id) {
-  const map = { feishu: '', dingtalk: '', wecom: '', telegram: '', ntfy: '' }
-  return map[id] || ''
+  const map = { feishu: 'webhook', dingtalk: 'webhook', wecom: 'webhook', telegram: 'publish', ntfy: 'webhook' }
+  return map[id] || 'webhook'
 }
 function getPlatformName(id) {
   const map = { feishu: '飞书', dingtalk: '钉钉', wecom: '企业微信', telegram: 'Telegram', ntfy: 'ntfy' }
   return map[id] || id
+}
+
+function maskSecret(value) {
+  if (!value) return ''
+  const text = String(value)
+  if (text.includes('*')) return text
+  if (text.length <= 12) return '********'
+  return `${text.slice(0, 6)}...${text.slice(-4)}`
 }
 
 const currentPlatformHelp = computed(() => {
@@ -264,11 +280,11 @@ async function fetchPlatforms() {
   } catch {
     // 使用本地备份
     platforms.value = [
-      { id: 'feishu', name: '飞书', icon: '', help: '' },
-      { id: 'dingtalk', name: '钉钉', icon: '', help: '' },
-      { id: 'wecom', name: '企业微信', icon: '', help: '' },
-      { id: 'telegram', name: 'Telegram', icon: '', help: '' },
-      { id: 'ntfy', name: 'ntfy', icon: '', help: '' },
+      { id: 'feishu', name: '飞书', icon: 'webhook', help: '' },
+      { id: 'dingtalk', name: '钉钉', icon: 'webhook', help: '' },
+      { id: 'wecom', name: '企业微信', icon: 'webhook', help: '' },
+      { id: 'telegram', name: 'Telegram', icon: 'publish', help: '' },
+      { id: 'ntfy', name: 'ntfy', icon: 'webhook', help: '' },
     ]
   }
 }
@@ -298,7 +314,7 @@ async function testChannel(ch) {
   testingId.value = ch.id
   try {
     await webhookApi.testChannel(ch.id)
-    showToast(` 测试消息已发送到「${ch.name}」`, 'success')
+    showToast(`测试消息已发送到「${ch.name}」`, 'success')
   } catch (e) {
     showToast('测试失败: ' + (e.response?.data?.detail || e.message), 'error')
   } finally {

@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h1> 功能设置</h1>
-        <p class="subtitle">管理 RSS 来源、调度参数和数据</p>
+        <p class="subtitle">管理 RSS 来源、爬取源和情报采集调度</p>
       </div>
     </div>
 
@@ -11,9 +11,9 @@
       <!-- RSS 来源管理 -->
       <section class="card settings-section">
         <h2> RSS 来源管理</h2>
-        <p class="section-desc">配置新闻抓取的 RSS 来源</p>
+        <p class="section-desc">配置情报采集的 RSS 来源</p>
 
-        <div class="feed-form">
+        <div v-if="isAdmin" class="feed-form">
           <input v-model="newFeed.name" class="input" placeholder="来源名称" />
           <input v-model="newFeed.url" class="input" placeholder="RSS URL" />
           <button class="btn btn-primary btn-sm" @click="addFeed" :disabled="!newFeed.name || !newFeed.url">
@@ -41,7 +41,7 @@
                   </a>
                 </td>
                 <td>
-                  <button class="btn btn-danger btn-sm" @click="deleteFeed(feed)" title="删除">
+                  <button v-if="isAdmin" class="btn btn-danger btn-sm" @click="deleteFeed(feed)" title="删除">
                     
                   </button>
                 </td>
@@ -57,9 +57,9 @@
       <!-- 网页爬取源管理 -->
       <section class="card settings-section">
         <h2> 网页爬取源管理</h2>
-        <p class="section-desc">添加新闻网站地址，系统将通过爬虫自动抓取该站点的新闻</p>
+        <p class="section-desc">添加网站地址，系统将通过爬虫自动抓取可索引内容</p>
 
-        <div class="site-form">
+        <div v-if="isAdmin" class="site-form">
           <input v-model="newSite.name" class="input" placeholder="站点名称" />
           <input v-model="newSite.url" class="input" placeholder="网站 URL（如 https://news.example.com）" />
           <input v-model.number="newSite.max_pages" class="input input-sm" type="number" min="1" max="100"
@@ -69,7 +69,7 @@
           </button>
         </div>
 
-        <details class="advanced-options" v-if="newSite.url">
+        <details class="advanced-options" v-if="isAdmin && newSite.url">
           <summary>高级选项</summary>
           <div class="form-group" style="margin-top: var(--space-sm)">
             <label class="form-label">链接选择器（CSS selector，可选）</label>
@@ -130,7 +130,7 @@
                 </td>
                 <td style="text-align:center">{{ site.max_pages }}</td>
                 <td>
-                  <button class="btn btn-danger btn-sm" @click="deleteSite(site)" title="删除">
+                  <button v-if="isAdmin" class="btn btn-danger btn-sm" @click="deleteSite(site)" title="删除">
                     
                   </button>
                 </td>
@@ -145,8 +145,8 @@
 
       <!-- 调度设置 -->
       <section class="card settings-section">
-        <h2>⏰ 调度设置</h2>
-        <p class="section-desc">配置自动抓取和日报生成的时间</p>
+        <h2>调度设置</h2>
+        <p class="section-desc">配置情报采集 Pipeline 的自动运行参数</p>
 
         <div class="schedule-form" v-if="schedule">
           <div class="form-group">
@@ -154,33 +154,14 @@
             <input v-model.number="schedule.fetch_interval_hours" type="number" class="input" min="1" max="24" />
           </div>
           <div class="form-group">
-            <label class="form-label">简报生成模式</label>
-            <select v-model="schedule.brief_mode" class="input">
-              <option value="daily">每日固定时间</option>
-              <option value="interval">按间隔周期</option>
-            </select>
-          </div>
-          <div class="form-group" v-if="schedule.brief_mode === 'daily'">
-            <label class="form-label">日报生成时间（24h）</label>
-            <input v-model.number="schedule.daily_brief_hour" type="number" class="input" min="0" max="23" />
-          </div>
-          <div class="form-group" v-if="schedule.brief_mode === 'interval'">
-            <label class="form-label">简报生成间隔（小时）</label>
-            <input v-model.number="schedule.brief_interval_hours" type="number" class="input" min="1" max="168" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">简报抓取时间范围（小时）</label>
-            <input v-model.number="schedule.brief_fetch_hours" type="number" class="input" min="1" max="10000" />
-          </div>
-          <div class="form-group">
             <label class="form-label">每次最大抓取数</label>
             <input v-model.number="schedule.max_articles_per_fetch" type="number" class="input" min="5" max="100" />
           </div>
           <div class="form-group">
-            <label class="form-label">文章保留天数</label>
+            <label class="form-label">采集记录保留天数</label>
             <input v-model.number="schedule.article_retention_days" type="number" class="input" min="7" max="365" />
           </div>
-          <button class="btn btn-primary" @click="saveSchedule">
+          <button v-if="isAdmin" class="btn btn-primary" @click="saveSchedule">
              保存调度设置
           </button>
         </div>
@@ -189,28 +170,28 @@
       <!-- 数据管理 -->
       <section class="card settings-section">
         <h2> 数据管理</h2>
-        <p class="section-desc">数据库统计和维护操作</p>
+        <p class="section-desc">手动触发情报采集并查看最近一次任务结果</p>
 
-        <div class="stats-grid" v-if="stats">
+        <div class="stats-grid" v-if="lastPipelineResult">
           <div class="stat-card">
-            <span class="stat-number">{{ stats.total }}</span>
-            <span class="stat-desc">文章总数</span>
+            <span class="stat-number">{{ lastPipelineResult.documents || 0 }}</span>
+            <span class="stat-desc">SourceDocument</span>
           </div>
           <div class="stat-card">
-            <span class="stat-number">{{ stats.embedded }}</span>
-            <span class="stat-desc">已向量化</span>
+            <span class="stat-number">{{ lastPipelineResult.embedded || 0 }}</span>
+            <span class="stat-desc">向量化 chunks</span>
           </div>
           <div class="stat-card">
-            <span class="stat-number accent">{{ stats.today_new }}</span>
-            <span class="stat-desc">今日新增</span>
+            <span class="stat-number accent">{{ lastPipelineResult.facts_created || 0 }}</span>
+            <span class="stat-desc">新增 facts</span>
           </div>
           <div class="stat-card">
-            <span class="stat-number">{{ stats.sources?.length || 0 }}</span>
-            <span class="stat-desc">来源数</span>
+            <span class="stat-number">{{ lastPipelineResult.intel_linked || 0 }}</span>
+            <span class="stat-desc">fact 关联</span>
           </div>
         </div>
 
-        <div class="data-actions">
+        <div v-if="canAnalyze" class="data-actions">
           <button class="btn" @click="runPipeline" :disabled="pipelineRunning">
             {{ pipelineRunning ? '执行中...' : ' 手动执行 Pipeline' }}
           </button>
@@ -226,14 +207,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { settingsApi, newsApi, waitForTask } from '../api'
+import { computed, ref, onMounted } from 'vue'
+import { settingsApi, intelApi, waitForTask } from '../api'
+import { hasRole } from '../auth'
 
 const feeds = ref([])
 const sites = ref([])
 const schedule = ref(null)
-const stats = ref(null)
+const lastPipelineResult = ref(null)
 const pipelineRunning = ref(false)
+const isAdmin = computed(() => hasRole('admin'))
+const canAnalyze = computed(() => hasRole('analyst'))
 const newFeed = ref({ name: '', url: '' })
 const newSite = ref({
   name: '',
@@ -360,19 +344,10 @@ async function saveSchedule() {
   }
 }
 
-async function fetchStats() {
-  try {
-    const res = await newsApi.getStats()
-    stats.value = res.data
-  } catch {
-    // 静默处理
-  }
-}
-
 async function runPipeline() {
   pipelineRunning.value = true
   try {
-    const res = await newsApi.runPipeline()
+    const res = await intelApi.runPipeline()
     const taskId = res.data.task_id
     if (!taskId) {
       throw new Error(res.data.message || '未返回任务 ID')
@@ -389,11 +364,12 @@ async function runPipeline() {
     }
 
     if (r.errors && r.errors.length > 0) {
-      showToast(`Pipeline 完成(带错误)！新增 ${r.new} 篇。错误: ${r.errors[0]}`, 'warning')
+      lastPipelineResult.value = r
+      showToast(`Pipeline 完成(带错误)！新增 ${r.documents || 0} 个文档。错误: ${r.errors[0]}`, 'warning')
     } else {
-      showToast(`Pipeline 完成！新增 ${r.new} 篇，向量化 ${r.embedded} 篇`, 'success')
+      lastPipelineResult.value = r
+      showToast(`Pipeline 完成！新增 ${r.documents || 0} 个文档，向量化 ${r.embedded || 0} 个子 chunks`, 'success')
     }
-    fetchStats()
   } catch (e) {
     showToast('执行失败: ' + (e.response?.data?.detail || e.message), 'error')
   } finally {
@@ -405,7 +381,6 @@ onMounted(() => {
   fetchFeeds()
   fetchSites()
   fetchSchedule()
-  fetchStats()
 })
 </script>
 

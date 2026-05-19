@@ -1,12 +1,13 @@
 """推送渠道管理 API"""
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
+from delivery.auth import require_admin, require_viewer
 from services.webhook_service import SUPPORTED_PLATFORMS
 
-router = APIRouter(prefix="/api/webhook", tags=["webhook"])
+router = APIRouter(prefix="/api/webhook", tags=["webhook"], dependencies=[Depends(require_viewer)])
 logger = structlog.get_logger(__name__)
 
 
@@ -81,7 +82,7 @@ def get_channels():
     return {"channels": result, "auto_push": service.get_auto_push()}
 
 
-@router.post("/channels")
+@router.post("/channels", dependencies=[Depends(require_admin)])
 def add_channel(channel: ChannelCreate):
     """添加推送渠道"""
     # 验证平台
@@ -102,7 +103,7 @@ def add_channel(channel: ChannelCreate):
     return {"status": "ok", "message": f"已添加: {new_ch.name}", "channel": new_ch.to_dict()}
 
 
-@router.put("/channels/{channel_id}")
+@router.put("/channels/{channel_id}", dependencies=[Depends(require_admin)])
 def update_channel(channel_id: str, update: ChannelUpdate):
     """更新推送渠道"""
     service = _get_service()
@@ -121,7 +122,7 @@ def update_channel(channel_id: str, update: ChannelUpdate):
     return {"status": "ok", "message": f"已更新: {result.name}"}
 
 
-@router.delete("/channels/{channel_id}")
+@router.delete("/channels/{channel_id}", dependencies=[Depends(require_admin)])
 def delete_channel(channel_id: str):
     """删除推送渠道"""
     service = _get_service()
@@ -130,7 +131,7 @@ def delete_channel(channel_id: str):
     return {"status": "ok", "message": "渠道已删除"}
 
 
-@router.post("/channels/{channel_id}/test")
+@router.post("/channels/{channel_id}/test", dependencies=[Depends(require_admin)])
 def test_channel(channel_id: str):
     """发送测试消息"""
     service = _get_service()
@@ -140,23 +141,16 @@ def test_channel(channel_id: str):
     return result
 
 
-@router.post("/push")
-def push_latest_brief():
-    """推送最新简报到所有已启用渠道"""
-    import os
-    import glob
+@router.post("/push", dependencies=[Depends(require_admin)])
+def push_latest_report():
+    """推送最新分析报告到所有已启用渠道"""
     from core.config_manager import get_config_manager
 
-    config = get_config_manager().config
-    brief_files = sorted(
-        glob.glob(os.path.join(config.output_path, "daily_brief_*.md")),
-        reverse=True,
-    )
-    if not brief_files:
-        raise HTTPException(status_code=404, detail="暂无简报可以推送")
-
-    with open(brief_files[0], "r", encoding="utf-8") as f:
-        content = f.read()
+    mgr = get_config_manager()
+    reports = mgr.report_store.list_reports(limit=1)
+    if not reports:
+        raise HTTPException(status_code=404, detail="暂无分析报告可以推送")
+    content = reports[0].content
 
     service = _get_service()
     results = service.broadcast(content)
@@ -171,23 +165,16 @@ def push_latest_brief():
     }
 
 
-@router.post("/push/{channel_id}")
-def push_to_channel(channel_id: str):
-    """推送最新简报到指定渠道"""
-    import os
-    import glob
+@router.post("/push/{channel_id}", dependencies=[Depends(require_admin)])
+def push_report_to_channel(channel_id: str):
+    """推送最新分析报告到指定渠道"""
     from core.config_manager import get_config_manager
 
-    config = get_config_manager().config
-    brief_files = sorted(
-        glob.glob(os.path.join(config.output_path, "daily_brief_*.md")),
-        reverse=True,
-    )
-    if not brief_files:
-        raise HTTPException(status_code=404, detail="暂无简报可以推送")
-
-    with open(brief_files[0], "r", encoding="utf-8") as f:
-        content = f.read()
+    mgr = get_config_manager()
+    reports = mgr.report_store.list_reports(limit=1)
+    if not reports:
+        raise HTTPException(status_code=404, detail="暂无分析报告可以推送")
+    content = reports[0].content
 
     service = _get_service()
     channel = service.get_channel(channel_id)
@@ -207,7 +194,7 @@ def get_auto_push():
     return {"auto_push": service.get_auto_push()}
 
 
-@router.put("/auto-push")
+@router.put("/auto-push", dependencies=[Depends(require_admin)])
 def update_auto_push(update: AutoPushUpdate):
     """更新自动推送设置"""
     service = _get_service()

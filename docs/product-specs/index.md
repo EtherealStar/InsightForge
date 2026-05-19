@@ -8,4 +8,5 @@
 
 | 文档 | 内容 |
 |---|---|
-| [api-reference.md](api-reference.md) | 完整 API 路由表、前端页面映射、通信架构 |
+| [API 路由参考](../design-docs/api-routes.md) | 完整 API 路由表、前端页面映射、通信架构 |
+| [ui-design-spec.md](ui-design-spec.md) | 前端信息架构、页面布局和交互规格 |

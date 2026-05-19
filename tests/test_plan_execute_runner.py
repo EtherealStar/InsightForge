@@ -111,7 +111,7 @@ def test_execute_updates_todos_and_saves_report(monkeypatch):
             yield AgentEvent(
                 event_type="action_start",
                 content="search",
-                tool_name="query_knowledge_base",
+                tool_name="search_evidence",
                 run_id=self.kwargs["run_id"],
             )
             yield AgentEvent(

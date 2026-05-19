@@ -39,29 +39,29 @@ Answer: 你好！我是 Logos 新闻助手，有什么可以帮你的？"""
 
     def test_parse_thought_action(self):
         """解析 Thought + Action + Action Input。"""
-        text = """Thought: 用户想了解 AI 新闻，需要搜索
-Action: search_news
-Action Input: {"query": "AI 新闻", "top_k": 5}"""
+        text = """Thought: 用户想了解 AI 情报，需要检索证据
+Action: search_evidence
+Action Input: {"query": "AI 情报", "top_k": 5}"""
 
         steps = self.parser.parse(text)
 
         assert len(steps) == 2
         assert steps[0].step_type == "thought"
         assert steps[1].step_type == "action"
-        assert steps[1].tool_name == "search_news"
-        assert steps[1].tool_input == {"query": "AI 新闻", "top_k": 5}
+        assert steps[1].tool_name == "search_evidence"
+        assert steps[1].tool_input == {"query": "AI 情报", "top_k": 5}
 
     def test_parse_action_without_input(self):
         """Action 无参数。"""
-        text = """Thought: 需要查看统计信息
-Action: get_news_stats
+        text = """Thought: 需要查询结构化事实
+Action: query_intel_facts
 Action Input: {}"""
 
         steps = self.parser.parse(text)
 
         assert len(steps) == 2
         assert steps[1].step_type == "action"
-        assert steps[1].tool_name == "get_news_stats"
+        assert steps[1].tool_name == "query_intel_facts"
         assert steps[1].tool_input == {}
 
     def test_parse_multiline_answer(self):
@@ -150,14 +150,14 @@ class TestStreamingReActParser:
         steps1 = self.parser.feed("Action: search")
         assert len(steps1) == 0  # 还没换行
 
-        steps2 = self.parser.feed("_news\n")
+        steps2 = self.parser.feed("_evidence\n")
         # Action 行完成但不生成步骤（等 Action Input）
         assert len(steps2) == 0
 
         steps3 = self.parser.feed('Action Input: {"query": "AI"}\n')
         assert len(steps3) == 1
         assert steps3[0].step_type == "action"
-        assert steps3[0].tool_name == "search_news"
+        assert steps3[0].tool_name == "search_evidence"
         assert steps3[0].tool_input == {"query": "AI"}
 
     def test_flush_remaining(self):

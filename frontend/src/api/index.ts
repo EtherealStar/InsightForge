@@ -1,4 +1,5 @@
-﻿import axios, { AxiosInstance } from 'axios'
+import axios, { AxiosInstance } from 'axios'
+import { getApiKey } from '../auth'
 
 const api: AxiosInstance = axios.create({
   baseURL: '/api',
@@ -10,9 +11,65 @@ const api: AxiosInstance = axios.create({
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+const RECENT_TASKS_STORAGE = 'insightforge_recent_tasks'
+
+function authHeaders() {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const apiKey = getApiKey()
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+  return headers
+}
+
+export function rememberTask(taskId: string, taskType = 'task') {
+  if (!taskId) return
+  const current = getRecentTasks()
+  const next = [
+    { task_id: taskId, task_type: taskType, created_at: new Date().toISOString() },
+    ...current.filter((item: any) => item.task_id !== taskId),
+  ].slice(0, 10)
+  localStorage.setItem(RECENT_TASKS_STORAGE, JSON.stringify(next))
+}
+
+export function getRecentTasks() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENT_TASKS_STORAGE) || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+api.interceptors.request.use((config) => {
+  const apiKey = getApiKey()
+  if (apiKey) {
+    config.headers.Authorization = `Bearer ${apiKey}`
+  }
+  return config
+})
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      error.message = '认证失败，请检查 API Key'
+    } else if (error.response?.status === 403) {
+      error.message = '当前角色无权执行该操作'
+    }
+    return Promise.reject(error)
+  },
+)
+
+// ========== 认证 ==========
+export const authApi = {
+  me: () => api.get('/auth/me'),
+}
+
 // ========== 异步任务 ==========
 export const tasksApi = {
+  list: (params?: any) => api.get('/tasks', { params }),
   getStatus: (taskId: string) => api.get(`/tasks/${taskId}`),
+  getEvents: (taskId: string, params?: any) => api.get(`/tasks/${taskId}`, { params }),
+  getRecentLocal: () => getRecentTasks(),
 }
 
 export async function waitForTask(
@@ -44,6 +101,8 @@ export async function waitForTask(
 export const configApi = {
   get: () => api.get('/config'),
   update: (data: any) => api.put('/config', data),
+  audit: (params?: any) => api.get('/config/audit', { params }),
+  reload: () => api.post('/config/reload'),
   getProviders: () => api.get('/config/providers'),
   fetchModels: (data: any) => api.post('/config/models', data),
 }
@@ -61,31 +120,18 @@ export const settingsApi = {
   updateSchedule: (data: any) => api.put('/settings/schedule', data),
 }
 
-// ========== 新闻 ==========
-export const newsApi = {
-  getArticles: (params?: any) => api.get('/news', { params }),
-  getArticle: (id: string | number) => api.get(`/news/${id}`),
-  getStats: () => api.get('/news/stats'),
-  getSources: () => api.get('/news/sources'),
-  runPipeline: () => api.post('/news/pipeline'),
-  deleteArticles: (ids: (string | number)[]) => api.post('/news/batch-delete', { article_ids: ids }),
-  resummarize: (ids: (string | number)[]) => api.post('/news/resummarize', { article_ids: ids }),
-}
-
-// ========== NewsAPI ==========
-export const extNewsApi = {
-  searchEverything: (params: any) => api.get('/newsapi/everything', { params }),
-  searchTopHeadlines: (params: any) => api.get('/newsapi/top-headlines', { params }),
-  saveArticle: (data: any) => api.post('/newsapi/save', data),
-}
-
-// ========== 简报 ==========
-export const briefApi = {
-  list: () => api.get('/briefs'),
-  get: (filename: string) => api.get(`/briefs/${filename}`),
-  generate: () => api.post('/briefs/generate'),
-  batchDelete: (filenames: string[]) => api.post('/briefs/batch-delete', { filenames }),
-  batchExport: (filenames: string[]) => api.post('/briefs/batch-export', { filenames }, { responseType: 'blob' }),
+// ========== 结构化情报 ==========
+export const intelApi = {
+  listFacts: (params?: any) => api.get('/intel/facts', { params }),
+  getFact: (id: string) => api.get(`/intel/facts/${id}`),
+  createFact: (data: any) => api.post('/intel/facts', data),
+  updateFact: (id: string, data: any) => api.put(`/intel/facts/${id}`, data),
+  updateFactStatus: (id: string, status: string) => api.patch(`/intel/facts/${id}/status`, { status }),
+  linkCompetitor: (id: string, data: any) => api.post(`/intel/facts/${id}/competitors`, data),
+  linkProduct: (id: string, data: any) => api.post(`/intel/facts/${id}/products`, data),
+  listEvidence: (id: string) => api.get(`/intel/facts/${id}/evidence`),
+  createEvidence: (id: string, data: any) => api.post(`/intel/facts/${id}/evidence`, data),
+  runPipeline: () => api.post('/intel/pipeline'),
 }
 
 // ========== Webhook 推送 ==========
@@ -111,7 +157,7 @@ export const queryApi = {
     // SSE 流式请求 — ReAct Agent 模式
     return fetch('/api/query/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ question, top_k: topK, session_id: sessionId || undefined }),
     })
   },
@@ -138,7 +184,7 @@ export const researchApi = {
   executeStream: (sessionId: string) => {
     return fetch(`/api/research/sessions/${sessionId}/execute/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({}),
     })
   },
@@ -150,9 +196,52 @@ export const researchApi = {
   push: (filename: string) => api.post(`/research/push/${filename}`),
 }
 
+// ========== 竞品管理 ==========
+export const competitorApi = {
+  list: (status = 'active') => api.get('/competitors', { params: { status } }),
+  create: (data: any) => api.post('/competitors', data),
+  get: (id: number) => api.get(`/competitors/${id}`),
+  update: (id: number, data: any) => api.put(`/competitors/${id}`, data),
+  delete: (id: number) => api.delete(`/competitors/${id}`),
+  addProduct: (competitorId: number, data: any) => api.post(`/competitors/${competitorId}/products`, data),
+  listProducts: (competitorId: number) => api.get(`/competitors/${competitorId}/products`),
+  deleteProduct: (productId: number) => api.delete(`/competitors/products/${productId}`),
+  getFacts: (competitorId: number, params?: any) => api.get(`/competitors/${competitorId}/facts`, { params }),
+  getTimeline: (competitorId: number, params?: any) => api.get(`/competitors/${competitorId}/timeline`, { params }),
+  compareFacts: (data: any) => api.post('/competitors/compare/facts', data),
+  autoLink: () => api.post('/competitors/auto-link'),
+}
+
+// ========== 分析报告 ==========
+export const reportApi = {
+  list: (params?: any) => api.get('/reports', { params }),
+  get: (id: number) => api.get(`/reports/${id}`),
+  generate: (data: any) => api.post('/reports/generate', data),
+  reviewQuality: (id: number) => api.post(`/reports/${id}/quality/review`),
+  approve: (id: number) => api.post(`/reports/${id}/approve`),
+  reject: (id: number, reason = '') => api.post(`/reports/${id}/reject`, { reason }),
+  publish: (id: number) => api.post(`/reports/${id}/publish`),
+  getAudit: (id: number) => api.get(`/reports/${id}/audit`),
+  delete: (id: number) => api.delete(`/reports/${id}`),
+}
+
 // ========== 健康检查 ==========
 export const healthApi = {
   check: () => api.get('/health'),
+}
+
+export const dashboardApi = {
+  summary: async () => {
+    const dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const [competitors, reports, facts, health] = await Promise.allSettled([
+      competitorApi.list(),
+      reportApi.list({ limit: 30 }),
+      intelApi.listFacts({ limit: 30, date_from: dateFrom }),
+      healthApi.check(),
+    ])
+    const tasks = await Promise.allSettled([tasksApi.list({ limit: 10 })]).then((items) => items[0])
+    return { competitors, reports, facts, health, tasks, recentTasks: getRecentTasks() }
+  },
 }
 
 export default api

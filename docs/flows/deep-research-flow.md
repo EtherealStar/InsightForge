@@ -18,7 +18,7 @@ sequenceDiagram
     participant Redis as Redis
 
     Note over User,Redis: === 阶段1: 计划生成 ===
-    User->>RR: POST /api/research/plan {topic}
+    User->>RR: POST /api/research/sessions/plan {topic}
     RR->>PER: generate_plan(topic)
     PER->>LLM: generate(system_prompt, topic)
     LLM-->>PER: 结构化 PLAN + todo list
@@ -30,7 +30,7 @@ sequenceDiagram
     Note over User: 用户审阅/编辑 PLAN 和 todos
 
     Note over User,Redis: === 阶段2: 执行 ===
-    User->>RR: POST /api/research/execute/{session_id}
+    User->>RR: POST /api/research/sessions/{session_id}/execute/stream
     RR->>PER: execute(session_id)
     PER->>ASS: update_status(session_id, approved)
     PER->>ASS: update_status(session_id, running)
@@ -57,7 +57,7 @@ sequenceDiagram
 
 ### 阶段 1: 计划生成 (Plan Generation)
 
-**端点**: `POST /api/research/plan`
+**端点**: `POST /api/research/sessions/plan`
 
 `PlanExecuteRunner.generate_plan(topic)`:
 1. LLM 调用 build_research_plan_prompt 生成结构化研究计划
@@ -78,7 +78,9 @@ sequenceDiagram
 
 ### 阶段 2: 执行 (Execute)
 
-**端点**: `POST /api/research/execute/{session_id}`
+**端点**: `POST /api/research/sessions/{session_id}/execute/stream`
+
+生产或启用认证时，前端执行 SSE 请求必须携带 `Authorization: Bearer <api_key>`，并通过 analyst 权限校验。
 
 `PlanExecuteRunner.execute(session_id)`:
 1. 状态切换: planned -> approved -> running
@@ -140,8 +142,9 @@ stateDiagram-v2
 
 ## 兼容接口
 
-旧版 `POST /api/research/stream` 保留兼容，直接执行单阶段深度研究模式。
-前端默认使用 Plan Execute 两阶段接口。
+前端默认使用 Plan Execute 两阶段接口：`POST /api/research/sessions/plan` 生成计划，`PUT /api/research/sessions/{session_id}/plan` 保存用户调整，`POST /api/research/sessions/{session_id}/execute/stream` 流式执行。
+
+深度研究完成后仍由 `DeepResearchService.save_report()` 保存为 `output/research/*.md` 文件报告。该产物不自动写入 `analysis_reports`，也不自动进入报告质量门禁；需要质量审查、证据侧栏、审批和发布时，应通过 Reports 工作流生成或查看受治理的结构化分析报告。
 
 ---
 

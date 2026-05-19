@@ -1,13 +1,13 @@
-﻿<template>
+<template>
   <div class="query-view">
     <div class="page-header">
       <div>
-        <h1> 智能助手</h1>
-        <p class="subtitle">自动识别意图 — 快速问答 · 深度研究</p>
+        <h1><SvgIcon name="search" :size="24" /> 智能分析</h1>
+        <p class="subtitle">自动识别意图 — 快速查询 · 竞品深度研究</p>
       </div>
       <div class="header-actions">
         <button class="btn btn-sm" @click="showReports = !showReports">
-          {{ showReports ? ' 返回对话' : ' 研究报告' }}
+          {{ showReports ? '返回对话' : '研究报告' }}
         </button>
       </div>
     </div>
@@ -15,10 +15,13 @@
     <!-- 研究报告列表 -->
     <div v-if="showReports" class="reports-panel card">
       <div class="reports-header">
-        <h2> 研究报告历史</h2>
+        <div>
+          <h2>研究报告文件</h2>
+          <p>深度研究保存为文件报告；受质量门禁治理的分析报告请在 Reports 页面查看。</p>
+        </div>
         <button v-if="reports.length" class="btn btn-sm btn-danger" @click="batchDeleteReports"
           :disabled="!selectedReports.length">
-           删除选中 ({{ selectedReports.length }})
+          删除选中 ({{ selectedReports.length }})
         </button>
       </div>
       <div v-if="reports.length" class="reports-list">
@@ -29,7 +32,9 @@
             <span class="report-name">{{ r.filename }}</span>
             <span class="report-meta">{{ new Date(r.generated_at).toLocaleString() }} · {{ (r.size_bytes / 1024).toFixed(1) }}KB</span>
           </div>
-          <button class="btn btn-sm" @click="pushReport(r.filename)" title="推送"></button>
+          <button class="btn btn-sm" @click="pushReport(r.filename)" title="推送">
+            <SvgIcon name="publish" :size="16" />
+          </button>
         </div>
       </div>
       <div v-else class="empty-state"><p>暂无研究报告</p></div>
@@ -38,7 +43,7 @@
       <div v-if="viewingReport" class="report-detail card">
         <div class="report-detail-header">
           <h3>{{ viewingReport.filename }}</h3>
-          <button class="btn btn-sm" @click="viewingReport = null"> 关闭</button>
+          <button class="btn btn-sm" @click="viewingReport = null">关闭</button>
         </div>
         <div class="markdown-body" v-html="renderMarkdown(viewingReport.content)"></div>
       </div>
@@ -72,16 +77,16 @@
       <div class="chat-container">
         <div class="chat-messages" ref="messagesRef">
         <div v-if="!messages.length" class="chat-welcome">
-          <div class="welcome-icon"></div>
-          <h2>你好，我是 Logos 智能助手</h2>
-          <p>我能自动识别你的需求：快速问答或深度研究</p>
+          <div class="welcome-icon"><SvgIcon name="dashboard" :size="48" /></div>
+          <h2>你好，我是 InsightForge 竞品分析助手</h2>
+          <p>我能自动识别你的需求：快速查询或深度竞品研究</p>
           <div class="mode-hints">
             <div class="mode-hint">
-              <span class="mode-badge quick"> 快速问答</span>
-              <span>查询新闻、统计数据、新闻库管理</span>
+              <span class="mode-badge quick">快速查询</span>
+              <span>查询竞品信息、情报统计、对比分析</span>
             </div>
             <div class="mode-hint">
-              <span class="mode-badge deep"> 深度研究</span>
+              <span class="mode-badge deep">深度研究</span>
               <span>说「深度研究/分析/调查/写报告」触发</span>
             </div>
           </div>
@@ -91,7 +96,9 @@
         </div>
 
         <div v-for="(msg, i) in messages" :key="i" :class="['chat-message', msg.role]">
-          <div class="message-avatar">{{ msg.role === 'user' ? '' : '' }}</div>
+          <div class="message-avatar">
+            <SvgIcon :name="msg.role === 'user' ? 'user' : 'search'" :size="18" />
+          </div>
           <div class="message-content">
             <div v-if="msg.reasoning && msg.reasoning.length" class="reasoning-block">
               <div class="reasoning-header" @click="msg.reasoningOpen = !msg.reasoningOpen">
@@ -101,7 +108,7 @@
               </div>
               <div v-if="msg.reasoningOpen" class="reasoning-steps">
                 <div v-for="(step, j) in msg.reasoning" :key="j" :class="['reasoning-step', step.event_type]">
-                  <div class="step-icon">{{ stepIcon(step.event_type) }}</div>
+                  <div class="step-icon"><SvgIcon :name="stepIcon(step.event_type)" :size="16" /></div>
                   <div class="step-content">
                     <div class="step-label">{{ stepLabel(step.event_type) }}</div>
                     <div class="step-text" v-if="isToolEvent(step.event_type)">
@@ -114,6 +121,10 @@
             </div>
             <div v-if="msg.role === 'assistant'" class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
             <div v-else>{{ msg.content }}</div>
+            <router-link v-if="msg.reportId" class="report-link" :to="`/reports?report_id=${msg.reportId}`">
+              <SvgIcon name="report" :size="16" />
+              查看受质量门禁治理的分析报告
+            </router-link>
           </div>
         </div>
 
@@ -140,7 +151,7 @@
 
         <!-- 流式加载中 -->
         <div v-if="streaming" class="chat-message assistant">
-          <div class="message-avatar"></div>
+          <div class="message-avatar"><SvgIcon name="search" :size="18" /></div>
           <div class="message-content">
             <div v-if="streamReasoning.length" class="reasoning-block live">
               <div class="reasoning-header">
@@ -149,7 +160,7 @@
               </div>
               <div class="reasoning-steps">
                 <div v-for="(step, j) in streamReasoning" :key="j" :class="['reasoning-step', step.event_type]">
-                  <div class="step-icon">{{ stepIcon(step.event_type) }}</div>
+                  <div class="step-icon"><SvgIcon :name="stepIcon(step.event_type)" :size="16" /></div>
                   <div class="step-content">
                     <div class="step-label">{{ stepLabel(step.event_type) }}</div>
                     <div class="step-text" v-if="isToolEvent(step.event_type)">
@@ -188,6 +199,7 @@
 import { ref, nextTick, computed, onMounted } from 'vue'
 import { queryApi, researchApi } from '../api'
 import { marked } from 'marked'
+import SvgIcon from '../components/icons/SvgIcon.vue'
 
 const messages = ref([])
 const input = ref('')
@@ -215,15 +227,15 @@ const isDeepResearch = computed(() => {
 })
 
 const inputPlaceholder = computed(() => {
-  if (isDeepResearch.value) return ' 将进入深度研究模式...'
-  return '输入问题（快速问答）或包含「深度研究」触发研究模式'
+  if (isDeepResearch.value) return '将进入深度竞品研究模式...'
+  return '输入问题（快速查询）或包含「深度研究」触发竞品分析模式'
 })
 
 const suggestions = [
-  '今天有什么重要新闻？',
-  '最近 AI 领域有什么进展？',
-  '新闻库里现在有多少文章？',
-  '深度研究：近期人工智能行业发展趋势',
+  'Cursor 和 Windsurf 有什么区别？',
+  '最近 AI 编程工具有什么新动态？',
+  '当前监控了哪些竞品？',
+  '深度研究：Cursor vs TRAE 竞品对比分析',
 ]
 
 function renderMarkdown(text) {
@@ -233,13 +245,13 @@ function renderMarkdown(text) {
 
 function stepIcon(type) {
   return {
-    thought: '',
-    action: '',
-    action_start: '',
-    observation: '',
-    action_result: '',
-    error: '',
-  }[type] || '•'
+    thought: 'search',
+    action: 'task',
+    action_start: 'task',
+    observation: 'evidence',
+    action_result: 'evidence',
+    error: 'warning',
+  }[type] || 'task'
 }
 
 function stepLabel(type) {
@@ -319,9 +331,16 @@ function normalizeSessionMessages(items) {
     .map(item => ({
       role: item.role,
       content: item.content || '',
+      reportId: extractReportId(item.content || ''),
       reasoning: null,
       reasoningOpen: false,
     }))
+}
+
+function extractReportId(text) {
+  if (!text) return null
+  const match = String(text).match(/report[_\s-]?id["'`:\s=]+(\d+)/i)
+  return match ? Number(match[1]) : null
 }
 
 async function fetchSessions() {
@@ -419,7 +438,7 @@ async function askQuestion(question) {
               streamAnswer.value = event.content
               streamRawOutput.value = ''
             } else if (event.event_type === 'error') {
-              streamAnswer.value += '\n\n ' + event.content
+              streamAnswer.value += '\n\n' + event.content
             } else {
               reasoning.push(event)
               streamReasoning.value = [...reasoning]
@@ -433,6 +452,7 @@ async function askQuestion(question) {
     messages.value.push({
       role: 'assistant',
       content: streamAnswer.value,
+      reportId: extractReportId(streamAnswer.value),
       reasoning: reasoning.length > 0 ? [...reasoning] : null,
       reasoningOpen: false,
     })
@@ -441,7 +461,7 @@ async function askQuestion(question) {
   } catch (e) {
     messages.value.push({
       role: 'assistant',
-      content: ` 请求失败: ${e.message}\n\n请检查后端服务是否正常运行。`,
+      content: `请求失败: ${e.message}\n\n请检查后端服务是否正常运行。`,
       reasoning: null, reasoningOpen: false,
     })
   } finally {
@@ -503,7 +523,7 @@ async function confirmAndExecutePlan() {
             } else if (event.event_type === 'todo_update') {
               editableTodos.value = normalizeTodos(event.metadata?.todos || editableTodos.value)
             } else if (event.event_type === 'error') {
-              streamAnswer.value += '\n\n ' + event.content
+              streamAnswer.value += '\n\n' + event.content
             } else {
               reasoning.push(event)
               streamReasoning.value = [...reasoning]
@@ -517,6 +537,7 @@ async function confirmAndExecutePlan() {
     messages.value.push({
       role: 'assistant',
       content: streamAnswer.value,
+      reportId: extractReportId(streamAnswer.value),
       reasoning: reasoning.length > 0 ? [...reasoning] : null,
       reasoningOpen: false,
     })
@@ -525,7 +546,7 @@ async function confirmAndExecutePlan() {
   } catch (e) {
     messages.value.push({
       role: 'assistant',
-      content: ` 研究执行失败: ${e.message}`,
+      content: `研究执行失败: ${e.message}`,
       reasoning: null,
       reasoningOpen: false,
     })
@@ -686,7 +707,11 @@ onMounted(() => {
   gap: var(--space-md);
   color: var(--text-secondary);
 }
-.welcome-icon { font-size: 4rem; margin-bottom: var(--space-sm); }
+.welcome-icon {
+  display: inline-flex;
+  margin-bottom: var(--space-sm);
+  color: var(--accent-primary);
+}
 .chat-welcome h2 { color: var(--text-primary); }
 
 .mode-hints {
@@ -895,6 +920,21 @@ onMounted(() => {
 .reports-header {
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: var(--space-lg);
+}
+.reports-header p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+.report-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
 }
 .reports-list { display: flex; flex-direction: column; gap: var(--space-sm); }
 .report-item {

@@ -1,78 +1,64 @@
-"""
-CLI 工具 — 方便调试各模块
-用法：
-    python -m delivery.cli pipeline          # 手动执行一次 Pipeline
-    python -m delivery.cli brief             # 手动生成日报
-    python -m delivery.cli ask "最近AI有什么进展？"  # 命令行提问
-    python -m delivery.cli stats             # 查看数据库统计
-    python -m delivery.cli cleanup           # 手动清理旧文章
+"""CLI helpers for local InsightForge operations.
+
+Usage:
+    python -m delivery.cli pipeline
+    python -m delivery.cli ask "Cursor 和 Windsurf 有什么区别？"
 """
 import argparse
+import secrets
 import sys
 
 from core.config import AppConfig
-from core.logging import setup_logging
+from core.config_manager import get_config_manager
 from core.factory import (
-    create_article_store,
-    create_vector_store,
-    create_llm_client,
-    create_embedding_client,
     create_chunking_service,
+    create_document_store,
+    create_embedding_client,
+    create_auth_store,
+    create_qdrant_vector_index,
 )
+from core.logging import setup_logging
 from infrastructure.collector import NewsCollector
 from services.pipeline_service import PipelineService
-from services.query_service import QueryService
-from services.brief_service import BriefService
+from delivery.auth import hash_api_key
+from models.auth import ActorRole, ApiKeyRecord
 
 
-def cmd_pipeline(config: AppConfig):
-    """手动执行一次 Pipeline"""
-    article_store = create_article_store(config)
-    vector_store = create_vector_store(config)
+def cmd_pipeline(config: AppConfig) -> None:
+    """Run the intel ingestion pipeline once."""
+    document_store = create_document_store(config)
+    vector_index = create_qdrant_vector_index(config)
     embedding_client = create_embedding_client(config)
     chunking_service = create_chunking_service(config)
     collector = NewsCollector(config)
 
     service = PipelineService(
-        collector, article_store, vector_store, embedding_client,
+        collector,
+        document_store,
+        vector_index,
+        embedding_client,
         chunking_service=chunking_service,
         markdown_output_path=config.markdown_output_path,
     )
     result = service.run()
-    print(f"\n Pipeline 完成:")
+    print("\nPipeline 完成:")
     print(f"   抓取: {result['fetched']} 篇")
-    print(f"   新增: {result['new']} 篇")
-    print(f"   分块: {result.get('chunks', 0)} 子 chunks + {result.get('parent_chunks', 0)} 父 chunks")
-    print(f"   向量化: {result['embedded']} 个子 chunks")
-    if result["errors"]:
-        print(f"    错误: {result['errors']}")
-
-
-def cmd_brief(config: AppConfig):
-    """手动生成日报"""
-    article_store = create_article_store(config)
-    llm_client = create_llm_client(config)
-
-    service = BriefService(article_store, llm_client, config.output_path)
-    brief = service.generate(hours=24)
-    print(f"\n 日报已生成:")
-    print(f"   文章数: {brief.article_count}")
-    print(f"   生成时间: {brief.generated_at}")
-    print(f"\n{brief.content_markdown}")
-
-
-def cmd_ask(config: AppConfig, question: str):
-    """命令行提问"""
-    article_store = create_article_store(config)
-    vector_store = create_vector_store(config)
-    llm_client = create_llm_client(config)
-    embedding_client = create_embedding_client(config)
-
-    service = QueryService(
-        article_store, vector_store, llm_client, embedding_client
+    print(f"   SourceDocument: {result['documents']} 个")
+    print(
+        f"   分块: {result.get('chunks', 0)} 子 chunks + "
+        f"{result.get('parent_chunks', 0)} 父 chunks"
     )
+    print(f"   向量化: {result['embedded']} 个子 chunks")
+    print(f"   facts: +{result['facts_created']} / 更新 {result['facts_updated']}")
+    if result["errors"]:
+        print(f"   错误: {result['errors']}")
 
-    print(f"\n 正在检索并分析...\n")
+
+def cmd_ask(question: str) -> None:
+    """Ask through the agent query service."""
+    service = get_config_manager().query_service
+
+    print("\n正在检索并分析...\n")
     final_answer = ""
     for event in service.answer_agent_stream(question):
         if event.event_type == "answer":
@@ -81,40 +67,47 @@ def cmd_ask(config: AppConfig, question: str):
     print(final_answer or "未获得回答，请稍后重试。")
 
 
-def cmd_stats(config: AppConfig):
-    """查看数据库统计"""
-    article_store = create_article_store(config)
-    stats = article_store.get_stats()
-
-    print(f"\n 数据库统计:")
-    print(f"   文章总数: {stats['total']}")
-    print(f"   已向量化: {stats['embedded']}")
-    print(f"   今日新增: {stats['today_new']}")
-    print(f"   最早文章: {stats['oldest_date']}")
-    print(f"   来源列表: {', '.join(stats['sources']) if stats['sources'] else '无'}")
-
-
-def cmd_cleanup(config: AppConfig):
-    """手动清理旧文章"""
-    article_store = create_article_store(config)
-    deleted = article_store.cleanup_old_articles(config.article_retention_days)
-    print(f"\n 清理完成: 删除 {deleted} 篇旧文章（保留 {config.article_retention_days} 天）")
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Logos 新闻分析助手 — CLI 工具"
+def cmd_create_api_key(config: AppConfig, name: str, role: str) -> None:
+    """Create an application API key and print the plaintext once."""
+    api_key = "if_" + secrets.token_urlsafe(32)
+    store = create_auth_store(config)
+    record = ApiKeyRecord(
+        name=name,
+        key_hash=hash_api_key(api_key),
+        role=ActorRole(role),
+        created_by="cli",
     )
+    saved = store.create_api_key(record)
+    print("API Key created.")
+    print(f"Name: {saved.name}")
+    print(f"Role: {saved.role.value if hasattr(saved.role, 'value') else saved.role}")
+    print(f"ID: {saved.id}")
+    print("Plaintext key, shown once:")
+    print(api_key)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="InsightForge 竞品分析助手 CLI")
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
 
-    subparsers.add_parser("pipeline", help="手动执行一次 Pipeline")
-    subparsers.add_parser("brief", help="手动生成日报")
+    subparsers.add_parser("pipeline", help="手动执行一次情报采集 Pipeline")
 
     ask_parser = subparsers.add_parser("ask", help="命令行提问")
     ask_parser.add_argument("question", type=str, help="问题内容")
 
-    subparsers.add_parser("stats", help="查看数据库统计")
-    subparsers.add_parser("cleanup", help="手动清理旧文章")
+    auth_parser = subparsers.add_parser("auth", help="认证管理")
+    auth_subparsers = auth_parser.add_subparsers(dest="auth_command")
+    create_key_parser = auth_subparsers.add_parser(
+        "create-key",
+        help="创建应用 API Key，明文只打印一次",
+    )
+    create_key_parser.add_argument("--name", required=True, help="API Key 名称")
+    create_key_parser.add_argument(
+        "--role",
+        required=True,
+        choices=[role.value for role in ActorRole],
+        help="角色",
+    )
 
     args = parser.parse_args()
 
@@ -128,14 +121,14 @@ def main():
     match args.command:
         case "pipeline":
             cmd_pipeline(config)
-        case "brief":
-            cmd_brief(config)
         case "ask":
-            cmd_ask(config, args.question)
-        case "stats":
-            cmd_stats(config)
-        case "cleanup":
-            cmd_cleanup(config)
+            cmd_ask(args.question)
+        case "auth":
+            if args.auth_command == "create-key":
+                cmd_create_api_key(config, args.name, args.role)
+            else:
+                auth_parser.print_help()
+                sys.exit(1)
 
 
 if __name__ == "__main__":

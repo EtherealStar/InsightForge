@@ -28,14 +28,6 @@ app.conf.update(
             "task": "scheduler.tasks.run_pipeline_task",
             "schedule": crontab(minute="*/5"),  # 每5分钟检查一次是否需要执行
         },
-        "daily-brief-beat": {
-            "task": "scheduler.tasks.run_daily_brief_task",
-            "schedule": crontab(minute="*/5"),  # 每5分钟检查一次是否需要执行
-        },
-        "weekly-cleanup-beat": {
-            "task": "scheduler.tasks.run_cleanup_task",
-            "schedule": crontab(minute=0, hour=3, day_of_week="sun"),  # 每周日凌晨3点
-        },
     }
 )
 

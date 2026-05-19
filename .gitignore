@@ -33,5 +33,4 @@ delivery/static/
 docs/generated/dbdoc/schema.json
 
 # RAGAs 评估
-evals/results/
-evals/datasets/generated/
+evals/

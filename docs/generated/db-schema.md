@@ -1,132 +1,248 @@
 # 数据库业务规则补充说明
 
-> **表结构文档**由 [tbls](https://github.com/k1LoW/tbls) 自动生成 → [dbdoc/](dbdoc/)
-> 本文件仅保留 tbls 无法覆盖的业务规则说明。
+> `docs/generated/dbdoc/` 为数据库表结构说明。当前权威 DDL 是 [migrations/001_infrastructure_foundation.sql](../../migrations/001_infrastructure_foundation.sql) 和后续 migration；本文件只记录 tbls 难以表达的业务规则。
 
 ---
 
-## ArticleStatus 生命周期
+## 文档 RAG 存储边界
 
-```
-stored → pending_summary → summarized → embedded
-```
+PostgreSQL 保存权威业务记录：
 
-- `stored`：新入库，等待摘要（无摘要服务时直接跳到 `summarized`）
-- `pending_summary`：已标记待摘要
-- `summarized`：摘要完成，等待向量化
-- `embedded`：向量化完成，可被检索
+- `upload_batches`：一次上传操作的批次状态、文件数量、总大小、上下文 metadata 和批次错误。
+- `document_blobs`：上传原始文件或解包子文件的 metadata、sha256、存储路径、父子文件关系和处理状态。
+- `source_documents`：统一来源文档 metadata、正文、来源 URL、语言、hash、竞品/产品关联和解析状态。
+- `document_parent_chunks`：父块正文、token 数、`child_point_ids`、标题路径、metadata 和 `search_vector`。
+- `document_vector_points`：Qdrant point 状态、`point_id`、`parent_chunk_id`、`chunk_index`、hash、token 数和错误信息。
+
+Qdrant 保存子块索引：
+
+- vector：子块 embedding。
+- payload：子块正文和检索 metadata。
+
+PostgreSQL 不保存子块 embedding，也不创建新的子块正文表。
 
 ---
 
 ## 核心实体关系
 
-```
-Article (1) ──→ (N) ParentChunk (父分块, PostgreSQL)
-Article (1) ──→ (N) Chunk (子分块, PostgreSQL/pgvector)
-Chunk (N)   ──→ (1) ParentChunk (通过 parent_chunk_id)
+```text
+SourceDocument (1) -> (N) ParentDocumentChunk
+SourceDocument (1) -> (N) document_vector_points
+SourceDocument (1) -> (N) IntelFact
+ParentDocumentChunk (1) -> (N) EvidenceRef
+IntelFact (1) -> (N) EvidenceRef
+IntelFact (N) -> (N) Competitor via intel_fact_competitors
+IntelFact (N) -> (N) CompetitorProduct via intel_fact_products
+InsightClaim (N) -> (N) IntelFact via fact_ids JSONB
+InsightClaim (1) -> (N) EvidenceRef
+AnalysisReport (N) -> (N) InsightClaim via report_claims
+AnalysisReport (1) -> (N) ReportEvidenceRef
+AnalysisReport (1) -> (N) ReportQualityReview
+UploadBatch (1) -> (N) DocumentBlob
+DocumentBlob (1) -> (N) DocumentBlob extracted children
+DocumentBlob (1) -> (0..1) SourceDocument
+ParentDocumentChunk (1) -> (N) ChildChunkPoint primary ownership
+ParentDocumentChunk (N) -> (N) ChildChunkPoint overlap via child_point_ids
+ChildChunkPoint -> Qdrant point
 
-AgentSession (1) ──→ (1) Plan Execute 深度研究会话
+AgentSession (1) -> general_query / research_plan_execute session
+Competitor (1) -> (N) CompetitorProduct
+AnalysisReport -> source_refs + audit_trail (legacy compatibility)
+TaskRun (1) -> (N) TaskStage
+TaskRun (1) -> (N) TaskEvent
+TaskStage (1) -> (N) TaskEvent
 ```
 
-外键约束已配置 `ON DELETE CASCADE`：删除文章时自动级联删除关联的父子 chunks。
+`document_parent_chunks.document_id` 和 `document_vector_points.document_id` 均级联引用 `source_documents.id`。`document_vector_points.parent_chunk_id` 级联引用 `document_parent_chunks.parent_chunk_id`。
+`intel_facts.source_document_id` 级联引用 `source_documents.id`；`evidence_refs` 通过 `owner_type/owner_id` 挂到 `intel_fact` 或 `insight_claim`，并可选引用 `source_documents.id` 与 `document_parent_chunks.parent_chunk_id`。
+`report_claims.report_id`、`report_evidence_refs.report_id` 和 `report_quality_reviews.report_id` 均级联引用 `analysis_reports.id`。`report_claims.claim_id` 级联引用 `insight_claims.id`；`report_evidence_refs` 可选引用 `evidence_refs`、`insight_claims` 和 `intel_facts`，引用目标删除时保留报告证据快照并将对应外键置空。
+`task_stages.task_run_id` 和 `task_events.task_run_id` 均级联引用 `task_runs.id`；`task_events.stage_id` 在阶段删除时置空，保留任务事件审计记录。
 
 ---
 
-## 分块策略
+## 父子分块规则
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `chunk_max_child_tokens` | 512 | 子 chunk 最大 token 数 |
-| `chunk_target_parent_tokens` | 1024 | 父 chunk 目标 token 数 |
-| `chunk_overlap_tokens` | 100 | 父 chunk 间重叠 token 数 |
-| `embedding_vector_size` | 1536 | pgvector 向量维度 |
+| `chunk_max_child_tokens` | 512 | 子块最大 token 数 |
+| `chunk_target_parent_tokens` | 1024 | 父块目标 token 数 |
+| `chunk_overlap_tokens` | 100 | 父块间 overlap token 数 |
+| `embedding_vector_size` | 1536 | Qdrant collection vector size |
 
-**关键规则**：
-- 子 chunk 按 Markdown 标题结构切分，≤512 token，存入 PostgreSQL `child_chunks` 用于 pgvector 检索
-- 父 chunk ~1024 token，完整包含若干子 chunk，存入 PostgreSQL 用于 LLM 召回
-- 父 chunk 之间通过共享尾部子 chunk 实现 ~100 token overlap
-- 子 chunk 明确归属一个父 chunk（通过 `parent_chunk_id`）
-- 短文档 (≤1024 token) 同时视为子 chunk 和父 chunk
-- 全文索引：父 chunk 写入时自动使用 `jieba` 分词生成 `search_vector`
-- `backfill_search_vectors()` 支持为已有数据回填全文索引
+关键规则：
 
-### 存储示意
+- 子块按 Markdown 标题、段落、列表、表格、代码块等结构边界切分。
+- 超长 block 才按句子切分，token 截断只作为兜底。
+- 子块 metadata 保留 `heading_path`、`doc_name`、`source`、`url`、`document_type`、`competitor_ids`、`product_ids`、`language`。
+- 父块由连续子块贪心组合到约 `1024` tokens，不拆碎子块。
+- 相邻父块通过共享尾部子块实现约 `100` tokens overlap。
+- 共享子块的 Qdrant point 仍只归属一个主 `parent_chunk_id`。
+- 父块 `child_point_ids` 保留 overlap 关系。
+- 短文档仍生成一个父块和至少一个子块。
 
+---
+
+## 存储示意
+
+```text
+SourceDocument
+  -> ChunkingService
+       -> ParentDocumentChunk[] -> PostgreSQL document_parent_chunks
+            content + child_point_ids + search_vector
+       -> ChildChunkPoint[] -> EmbeddingClient -> QdrantVectorIndex
+            vector + payload.content + payload metadata
+       -> document_vector_points
+            point_id + vector_status + error
 ```
-文章 → ChunkingService
-         ├── 子 chunks (≤512 tok) ──→ Embedding ──→ PostgreSQL child_chunks
-         │                                          embedding + parent_chunk_id
-         └── 父 chunks (~1024 tok) ──→ PostgreSQL (parent_chunks)
-                                      含 search_vector (jieba tsvector)
+
+---
+
+## SourceDocument 生命周期
+
+```text
+pending -> parsed -> chunked -> vectorized
+                     \-> failed
 ```
+
+- `pending`：文档已记录，等待解析或分块。
+- `parsed`：正文和 metadata 可用。
+- `chunked`：父块和 point 状态已写入 PostgreSQL。
+- `vectorized`：Qdrant upsert 成功。
+- `failed`：解析、分块、embedding 或 Qdrant 写入失败。
+
+旧新闻列表层仍可保留 `ArticleStatus`：
+
+```text
+stored -> pending_summary -> summarized -> embedded
+```
+
+该状态只服务新闻 UI/API，不是新 RAG 存储权威；full pipeline 不再依赖 `pending_summary/summarized/embedded` 推进。
+
+---
+
+## 结构化事实与证据边界
+
+Phase 2 后，结构化情报事实不再保存到 `source_documents.intel_type`、`source_documents.analysis_notes` 或 `articles.summary`。事实层使用独立业务表：
+
+- `intel_facts`：保存原子事实/事件/信号，含事实类型、维度、重要度、置信度和来源可靠度。
+- `intel_fact_competitors` / `intel_fact_products`：保存事实级竞品和产品归因。
+- `evidence_refs`：保存短 snippet 和定位信息，回链 `source_documents` 与 `document_parent_chunks`。
+- `insight_claims`：保存基于事实和证据形成的分析结论。
+
+RAG 继续负责原文证据召回和开放式检索，`IntelFact` 不向量化为第二套语义检索主路径。
+
+---
+
+## 报告质量与安全基线
+
+Phase 3 整体验收后，报告治理与安全基础表由 `005_report_quality_security_schema.sql` 提供：
+
+- `analysis_reports`：新增 `version`、`review_status`、`quality_score`、`quality_summary`、`generation_context_hash`、审批和发布时间字段。
+- `report_claims`：保存报告与 `InsightClaim` 的章节级关系。
+- `report_evidence_refs`：保存报告正文引用到 evidence/fact/claim 的关系和 URL/title/snippet 快照。
+- `report_quality_reviews`：保存规则、LLM Judge 或人工审查结果、分项评分、问题和修订建议。
+- `config_audit_log`：独立保存配置变更审计，不混入报告审计。
+- `api_keys`：保存应用 API Key 哈希、角色和状态，不保存明文密钥。
+
+报告状态扩展为：
+
+```text
+draft -> quality_reviewing -> revision_required/waiting_review -> approved -> published
+                         \-> rejected
+published -> archived
+```
+
+`analysis_reports.source_refs` 和 `audit_trail` 继续保留为旧报告兼容字段；新报告写入路径应优先使用 `report_claims`、`report_evidence_refs` 和 `report_quality_reviews`。
+
+发布规则由服务层执行：报告生成后必须先写入质量审查记录；无证据关键结论、无效 citation、Judge JSON 解析失败或低于质量阈值时不得进入 `approved` 或 `published`。默认发布路径是 `waiting_review + passed -> approved -> published`，`REPORT_QUALITY_AUTO_PUBLISH=false` 是生产默认。
+
+应用 API Key 只保存 hash，角色值为 `viewer`、`analyst`、`admin`。配置修改记录写入 `config_audit_log`，`before_masked` 和 `after_masked` 不能包含 secret 原文。
+
+Phase 3 Step 8 验收口径：
+
+- `ReportQualityReview.status=failed` 的报告只能进入 `revision_required`。
+- `ReportQualityReview.status=passed` 的报告默认进入 `waiting_review`，仍需 admin 审批后才能发布。
+- `api_keys.key_hash` 是认证查找字段，明文 key 只在创建时返回一次。
+- `config_audit_log` 与 `analysis_audit_log` 分离，配置审计不得混入报告生成、审批或发布事件。
+
+---
+
+## 上传文件生命周期
+
+`upload_batches.status`：
+
+```text
+received -> processing -> succeeded/partial_failed/failed/cancelled
+```
+
+`document_blobs.status`：
+
+```text
+stored -> extracted/parsed/failed/rejected/quarantined
+```
+
+关键规则：
+
+- 文件字节保存在 FileBlobStore；`document_blobs.storage_path` 保存可追踪路径。
+- `document_blobs.sha256` 用于重复文件识别，不要求数据库唯一。
+- zip 解包后的子文件使用 `parent_blob_id` 指回原压缩包。
+- 解析成功的 blob 通过 `source_documents.blob_id` 进入文档 RAG 链路。
+- 单个 blob 失败时必须写入 `document_blobs.error`，同批次其他文件可继续处理。
+- PDF/DOCX 当前只识别为 unsupported，不进入 `source_documents`。
 
 ---
 
 ## AgentSession 通用 Agent 会话
 
-`agent_sessions` 同时保存普通问答和 Plan Execute 深度研究会话。普通问答使用 `session_type=general_query` 和 `active` 状态；深度研究继续保存用户主题、AI 生成的 PLAN、用户确认后的 todo list、执行事件、最终报告正文和报告文件名。
+`agent_sessions` 同时保存普通问答和 Plan-Execute 深度研究会话。普通问答使用 `session_type=general_query` 和 `active` 状态；深度研究使用 planned/approved/running/completed 状态流。
 
-### 状态流转
+状态流转：
 
+```text
+active -> completed/failed/cancelled
+planned -> approved -> running -> completed
+                     \-> failed
+planned -> cancelled
 ```
-active ────────────→ completed/failed/cancelled
-planned → approved → running → completed
-                     └──────→ failed
-planned ────────────→ cancelled
+
+执行期 Redis 可缓存会话热数据，PostgreSQL 是权威存储。
+
+---
+
+## 任务历史与 Redis 状态
+
+`task_runs`、`task_stages`、`task_events` 是所有异步任务生命周期的 PostgreSQL 权威记录：
+
+- `task_runs`：保存任务类型、幂等键、输入、结果、错误、尝试次数和整体时间戳。
+- `task_stages`：保存任务阶段名称、阶段状态、阶段结果、阶段错误和阶段时间戳。
+- `task_events`：append-only 事件流，用于审计和后续实时状态回放。
+- 手动 Pipeline API 以 `task_runs.id` 作为 Celery task id；`/api/tasks/{task_id}` 读取 run、stages、events 并附带 Celery 状态。
+- Pipeline 阶段包括 collect、markdown、store_source_documents、chunk_and_vectorize、extract_intel_facts 和 link_facts；上传批次阶段包括 upload_batch、parse_documents、chunk_documents 和 vectorize_document。
+
+任务状态统一使用：
+
+```text
+pending -> running -> succeeded/failed/cancelled/skipped
 ```
 
-- `active`：普通问答会话进行中，可持续追加消息、事件和会话摘要
-- `planned`：AI 已生成研究计划，等待用户审阅或编辑 todo
-- `approved`：用户已确认计划和 todo，准备执行
-- `running`：ReAct Agent 正在按确认后的计划执行
-- `completed`：执行完成，`final_answer` 有最终报告正文，`report_filename` 指向 `output/research` 中的 Markdown 文件
-- `failed`：执行失败，`error` 记录失败原因
-- `cancelled`：用户取消执行
+Redis 只保存执行期状态：
 
-### 缓存与持久化
+- `logos:task:{run_id}`：任务热状态。
+- `logos:task_events:{run_id}`：任务事件 stream。
+- `logos:lock:pipeline`：Pipeline 全局执行锁。
+- `logos:lock:upload:{batch_id}`：上传批次执行锁。
+- `logos:lock:document_parse:{blob_id}`：单 blob 解析锁。
+- `logos:lock:vectorize:{document_id}`：文档向量化锁。
+- `logos:idempotency:*` / `logos:cache:*`：短期幂等键和缓存。
 
-- 执行期 Redis 缓存键为 `logos:agent_session:{session_id}`，保存完整会话 JSON。
-- 计划生成、用户保存计划、状态切换会立即 upsert PostgreSQL。
-- 执行中 `events`、`messages`、`todos` 优先更新 Redis；Redis 不可用时直接写 PostgreSQL。
-- `completed/failed/cancelled` 终态会将 Redis 中的完整会话 flush 到 PostgreSQL。
+Redis 不可用时，热状态、事件 stream、幂等和缓存可以丢失；PostgreSQL 任务历史必须保持完整。
 
-### JSONB 字段语义
-
-- `messages`：OpenAI message 格式数组，用于审计计划生成上下文。
-- `plan`：结构化研究计划；如果模型返回非 JSON，则保存为 `{"raw": "..."}`。
-- `todos`：用户最终确认的执行列表，元素包含 `id/title/status`。
-- `events`：`AgentEvent.to_dict()` 序列化结果，包含 `thought/action_start/action_result/todo_update/answer/error` 等事件。
-- `summary`：会话记忆摘要，普通问答和深度研究都会注入 Agent prompt。
-- `token_count`：当前会话估算 token 数。
-- `last_compacted_tokens`：上次成功摘要压缩时的估算 token 数。
-- `compact_failures`：连续摘要更新失败次数，达到 3 次后更新间隔从 5k token 退避到 10k token。
+---
 
 ## 三层记忆系统
 
-### core_memory_revisions
+- `core_memory_revisions`：核心记忆版本表，不物理删除。
+- `persistent_memories`：跨会话记忆，默认 `pending`，用户确认后变为 `active`。
+- `agent_sessions.summary`：会话摘要，用于后续 prompt 注入。
 
-核心记忆版本表，保存 Agent 工作规则、工具说明、摘要模板和全量压缩模板等内容。核心记忆不物理删除；更新时创建新 revision，并将同 `kind` 的旧 revision 标记为 inactive。
-
-### persistent_memories
-
-持久记忆表，保存跨会话记忆。
-
-| 字段 | 业务语义 |
-|---|---|
-| `memory_type` | `user` / `feedback` / `project` |
-| `status` | `pending` / `active` / `archived` / `deleted` |
-| `summary` | MEMORY 索引使用的 50 token 内摘要 |
-| `content` | 具体记忆正文 |
-| `source_session_id` | 记忆候选来源 session |
-
-MEMORY 索引以数据库为准，由 `persistent_memories` 中 `status=active` 的记录生成：
-
-```text
-- [feedback-concise] - 回复保持简洁
-```
-
-持久记忆采用“建议写入，用户确认”：自动提取只能写入 `pending`，用户确认后才更新为 `active` 并进入 MEMORY 索引。
-
-### 报告兼容关系
-
-最终报告继续由 `DeepResearchService` 写入 `output/research/research_*.md`，以兼容现有报告列表、查看、导出、删除和 Webhook 推送接口。`agent_sessions.report_filename` 只保存文件名，`final_answer` 保存报告正文副本，便于会话详情直接展示。
+MEMORY 索引以数据库中 `status=active` 的持久记忆为准。

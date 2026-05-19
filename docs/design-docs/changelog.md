@@ -1,85 +1,89 @@
 # 架构变更历史
 
-> **来源**：从 [ARCHITECTURE.md](../../ARCHITECTURE.md) 顶部"最近架构升级"迁出的完整变更记录。
+> 来源：从 [ARCHITECTURE.md](../../ARCHITECTURE.md) 顶部“最近架构变更”迁出的完整变更记录。
+
+---
+
+## 2026-05 Phase 2 Facts/Claims API 收口
+
+- 新增 `/api/intel/facts` 和 `/api/insights/claims`，用于查询详情和创建 draft facts/claims。
+- 竞品 API 新增 `/api/competitors/{competitor_id}/facts` 和 `/api/competitors/{competitor_id}/timeline`，详情主字段改为 `fact_count`。
+- API 层只调用 service，不暴露 Store、Qdrant、LLM、Redis、SQL/DDL 等底层能力；旧 `/api/competitors/{id}/intel` 仅保留为 fact 口径别名。
+
+---
+
+## 2026-05 Phase 2 结构化事实层地基
+
+本次落地 Phase 2 的前 4 步，只铺设结构化事实层底座，不接入 Pipeline、Agent 工具或 API 运行路径：
+
+- 新增 `IntelFact`、`EvidenceRef`、`InsightClaim` 领域模型，事实、证据和 claim 均保持 dataclass 纯数据。
+- 新增 `004_intel_fact_schema.sql`，创建 `intel_facts`、`intel_fact_competitors`、`intel_fact_products`、`evidence_refs` 和 `insight_claims`。
+- 清理旧文档级情报字段和关联表：`source_documents.intel_type`、`source_documents.analysis_notes`、`source_documents.source_reliability`、`intel_competitors`、`intel_products`。
+- 新增 `StructuredExtractionClientProtocol`、`IntelStoreProtocol`、`InsightStoreProtocol` 及 PostgreSQL 实现。
+- 新增独立结构化抽取配置和客户端，结构化事实抽取不隐式复用 Agent/报告主 LLM。
+
+---
+
+## 2026-05 Phase 1 基础设施全量重构
+
+本次重构替换了旧向量基础设施和 chunk schema：
+
+- PostgreSQL 使用官方 `postgres:16`，不再依赖 vector extension。
+- 新增 Qdrant，作为唯一子块向量索引。
+- 删除旧向量 Store 协议、旧 PostgreSQL 向量实现、旧向量工厂函数和旧子块 embedding 语义。
+- 新增 `VectorIndexProtocol` 与 `QdrantVectorIndex`，负责 collection、upsert、search、delete 和健康检查。
+- 新增 `DocumentStoreProtocol` 与 `PostgresDocumentStore`，负责 `source_documents`、`document_parent_chunks`、`document_vector_points`。
+- 新增文档模型 `SourceDocument`、`ParentDocumentChunk`、`ChildChunkPoint`、`ChildChunkSearchResult`。
+- `ChunkingService` 改为输出 PostgreSQL 父块和 Qdrant 子块 point。
+- 父子分块保证延续：子块 `<=512` tokens，父块约 `1024` tokens，父块由连续子块组成，父块之间通过共享尾部子块 overlap。
+- Qdrant point id 固定为 `{document_id}:c:{chunk_index}`，payload 保存子块正文和 metadata。
+- PostgreSQL 不保存子块 embedding，也不创建新的子块正文表。
+- Scheduler 验证链路接入：Pipeline 和上传批次摄入写入 `task_runs/task_stages/task_events`，Redis 锁保护 Pipeline、上传批次和文档向量化，`/api/tasks/{task_id}` 返回 PostgreSQL 任务历史与 Celery 状态。
+- Step 10 收尾清理完成：当前运行路径只保留 PostgreSQL、Redis、Qdrant 和本地文件存储；旧任务监控面板入口与 Windows 包管理器安装入口不作为项目依赖保留。
+
+---
+
+## 2026-05 InsightForge 竞品分析改造
+
+- Logos 产品定位升级为 InsightForge，聚焦 AI 编程工具赛道竞品分析。
+- 新增 `Competitor`、`CompetitorProduct`、`AnalysisReport`、`SourceRef`、`AuditLog` 等域模型；Phase 2 后新增 `EvidenceRef` 承接事实和 claim 的证据引用。
+- 新增竞品 Store、报告 Store、API 路由、前端视图和 Agent 工具。
+- Pipeline 支持情报自动关联竞品和产品线。
 
 ---
 
 ## 2026-05 Pipeline 抓取与任务反馈修复
 
-- 修复前端仍按同步结果读取 `/api/news/pipeline` 的问题；现在前端拿到 `task_id` 后轮询 `/api/tasks/{task_id}`，避免 `undefined.errors` 报错。
-- `NewsCollector.fetch_all()` 改为 `ThreadPoolExecutor` 并发抓取 RSS 源，保留单源失败隔离。
-- RSS/网页爬取源配置读写抽到 `core/source_config.py`，Scheduler 不再导入 Delivery Router 私有函数。
-- `WebCrawler` 的 per-site `max_pages` 改为显式参数传递，不再临时修改实例状态。
-- Pipeline/日报/清理 Celery 任务启用 `autoretry_for`、backoff 与 jitter，提升任务级异常恢复能力。
+- `/api/intel/pipeline` 返回 `task_id`，前端轮询 `/api/tasks/{task_id}`。
+- RSS 抓取改为 `ThreadPoolExecutor` 并发，保留单源失败隔离。
+- RSS/网页爬取源配置抽到 `core/source_config.py`。
+- `WebCrawler` 的 per-site `max_pages` 改为显式参数。
+- Pipeline/日报/清理 Celery 任务启用 autoretry、backoff 与 jitter。
 
 ---
 
 ## 2026-05 RAGAs 评估框架
 
-引入 [RAGAs](https://docs.ragas.io/) 框架，建立三维度自动化评估体系：
-
-### 8. RAGAs 评估框架 (无评估 → 三维度 LLM-as-Judge)
-
-- 新增 `evals/` 独立评估模块，依赖通过 `requirements-eval.txt` 隔离，不影响生产镜像。
-- 实现三个评估维度：① 检索质量（Context Precision / Recall）、② 端到端问答（Faithfulness / Response Relevancy）、③ Agent 工具调用（ToolCallAccuracy / AgentGoalAccuracy）。
-- `evals/adapters.py` 将 Logos 的 `HybridSearchResult` / `AgentEvent` / `AgentResult` 转换为 RAGAs 的 `SingleTurnSample` / `MultiTurnSample`，解耦内部数据结构与评估框架。
-- `evals/eval_config.json` 支持 OpenAI 兼容的自定义评判 LLM 端点配置。
-- `evals/runner.py` 编排完整流程：加载黄金数据集 → 调用 Logos 组件采集系统输出 → 适配 → 评估 → 保存结果。
-- 提供 CLI 入口 `python -m evals.scripts.run_eval` 和合成测试集生成脚本 `python -m evals.scripts.generate_testset`。
+- 新增 `evals/` 独立评估模块，依赖通过 `requirements-eval.txt` 隔离。
+- 实现检索质量、端到端问答、Agent 工具调用三类评估。
+- `evals/adapters.py` 将内部检索结果、Agent 事件和回答转换为 RAGAs sample。
+- `evals/eval_config.json` 支持 OpenAI 兼容评判 LLM 和 embedding。
+- 提供 `python -m evals.scripts.run_eval` 和合成测试集生成脚本。
 
 ---
 
-## 2026-05 架构升级
+## 2026-05 基础设施迁移
 
-本项目在 2026 年 5 月进行了底层核心基础设施的迁移与升级。
+- SQLite 迁移到 PostgreSQL，解决多进程写入、JSONB 和全文搜索能力问题。
+- APScheduler 迁移到 Celery + Redis，耗时任务异步执行，API 返回 `task_id`。
+- 引入 Docker Compose 管理 PostgreSQL、Redis、Qdrant 等基础设施。
+- 替换标准 logging 为 structlog，支持结构化日志和 request/task 上下文。
 
-### 1. 关系型数据库迁移 (SQLite → PostgreSQL)
+---
 
-- 弃用了单文件锁机制的 SQLite (`SQLiteArticleStore`)。
-- 引入了 `PostgresArticleStore`，利用 `psycopg2-binary` 建立同步连接。
-- 使用 `INSERT ... ON CONFLICT DO NOTHING` 实现更安全的并发去重。
-- 文章标签等 JSON 数据使用 Postgres 原生 `JSONB` 格式存储。
+## 2026-05 检索架构升级
 
-### 2. 向量数据库迁移 (ChromaDB → Qdrant Cloud → pgvector)
-
-- 弃用了本地化、难以集群扩展的 ChromaDB。
-- 曾引入独立向量数据库 `QdrantVectorStore`。
-- 当前改为 `PgVectorStore`，通过 PostgreSQL `pgvector` 承载子 chunk embedding，减少独立基础设施和跨库一致性风险。
-
-### 3. 异步任务队列升级 (APScheduler → Celery + Redis)
-
-- 弃用了随应用启动的本地 `APScheduler` 单进程定时器。
-- 引入了基于 `Celery` 和 `Redis` 的分布式异步任务架构。
-- 通过 `Celery Beat` 进行定时触发调度，通过 `Celery Worker` 执行实际耗时任务。
-- 将 `/api/news/pipeline` 和 `/api/briefs/generate` 接口改为异步执行并返回 `task_id`。
-
-### 4. 父子分块 RAG 架构 (整篇文章 Embedding → Parent-Child Chunking)
-
-- 弃用了整篇文章级别的 Embedding + 检索方式。
-- 引入 `ChunkingService`，按 Markdown 章节结构将文章拆分为**子 chunk (≤512 token)** 用于向量检索，组装**父 chunk (~1024 token)** 用于 LLM 召回上下文。
-- 子 chunk 存储在 PostgreSQL `child_chunks` 表，父 chunk 存储在 PostgreSQL `parent_chunks` 表。
-- `VectorStoreProtocol` 重构为 chunk 级别接口 (`add_chunks` / `search_chunks` / `delete_by_article_ids`)。
-- 使用 `tiktoken` (cl100k_base) 精确计算 token 数。
-
-### 5. 混合检索 (纯向量检索 → 向量 + 关键词 + RRF 融合)
-
-- 弃用了仅依赖向量语义搜索的单通道检索方式。
-- 在 PostgreSQL `parent_chunks` 表上新增 `search_vector` (`tsvector`) 列 + GIN 索引。
-- 使用应用层 `jieba` 分词实现中文全文检索支持。
-- 引入 `HybridSearchService`，编排向量检索 + 关键词检索两路并行，通过 **RRF** 算法融合排名。
-- 支持三种检索模式（hybrid/semantic/keyword）、优雅降级。
-
-### 6. 基础设施容器化 (手动安装 → Docker Compose)
-
-- 引入 `docker-compose.yml`，一条命令启动全部基础设施。
-- PostgreSQL 16 + pgvector、Redis 7 使用 Docker Named Volumes 持久化数据。
-- 所有容器配置 `healthcheck`。
-- `start_dev.bat` 自动调用 `docker compose up -d`。
-
-### 7. 日志系统升级 (logging → structlog)
-
-- 替换标准 `logging` 为 `structlog`，实现结构化 JSON 日志。
-- 集成 `StructlogMiddleware` 实现请求级 `request_id` 追踪。
-- Celery 信号自动绑定 `task_id`/`task_name` 上下文。
-
-> 上述升级遵循 `Protocol` 接口设计，在基础设施层实现了无缝替换。
+- 整篇文章 embedding 改为父子分块 RAG。
+- 子块用于语义检索，父块用于 LLM 召回上下文。
+- 混合检索采用 Qdrant 子块语义检索 + PostgreSQL 父块 FTS + RRF。
+- 支持 `hybrid`、`semantic`、`keyword` 检索模式和可选 rerank。

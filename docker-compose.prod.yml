@@ -1,6 +1,73 @@
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-production}
+  AUTH_ENABLED: ${AUTH_ENABLED:-true}
+  APP_API_KEYS: ${APP_API_KEYS:-}
+  REPORT_QUALITY_MIN_SCORE: ${REPORT_QUALITY_MIN_SCORE:-0.75}
+  REPORT_QUALITY_AUTO_PUBLISH: ${REPORT_QUALITY_AUTO_PUBLISH:-false}
+  PG_DSN: ${PG_DSN:?Set PG_DSN in .env}
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:?Set CELERY_BROKER_URL in .env}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:?Set CELERY_RESULT_BACKEND in .env}
+  VECTOR_BACKEND: ${VECTOR_BACKEND:-qdrant}
+  QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+  QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+  QDRANT_DOCUMENTS_COLLECTION: ${QDRANT_DOCUMENTS_COLLECTION:-insightforge_documents_v1}
+  QDRANT_DISTANCE: ${QDRANT_DISTANCE:-Cosine}
+  LLM_PROVIDER: ${LLM_PROVIDER:-openai_compatible}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+  LLM_MODEL: ${LLM_MODEL:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  STRUCTURED_EXTRACTION_PROVIDER: ${STRUCTURED_EXTRACTION_PROVIDER:-openai_compatible}
+  STRUCTURED_EXTRACTION_API_KEY: ${STRUCTURED_EXTRACTION_API_KEY:-}
+  STRUCTURED_EXTRACTION_BASE_URL: ${STRUCTURED_EXTRACTION_BASE_URL:-}
+  STRUCTURED_EXTRACTION_MODEL: ${STRUCTURED_EXTRACTION_MODEL:-}
+  STRUCTURED_EXTRACTION_TEMPERATURE: ${STRUCTURED_EXTRACTION_TEMPERATURE:-0}
+  STRUCTURED_EXTRACTION_MAX_TOKENS: ${STRUCTURED_EXTRACTION_MAX_TOKENS:-2048}
+  JUDGE_PROVIDER: ${JUDGE_PROVIDER:-openai_compatible}
+  JUDGE_API_KEY: ${JUDGE_API_KEY:-}
+  JUDGE_BASE_URL: ${JUDGE_BASE_URL:-}
+  JUDGE_MODEL: ${JUDGE_MODEL:-}
+  JUDGE_TEMPERATURE: ${JUDGE_TEMPERATURE:-0}
+  JUDGE_MAX_TOKENS: ${JUDGE_MAX_TOKENS:-2048}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+  EMBEDDING_VECTOR_SIZE: ${EMBEDDING_VECTOR_SIZE:-1536}
+  RERANK_ENABLED: ${RERANK_ENABLED:-false}
+  RERANK_API_KEY: ${RERANK_API_KEY:-}
+  RERANK_BASE_URL: ${RERANK_BASE_URL:-}
+  RERANK_MODEL: ${RERANK_MODEL:-}
+  RERANK_TOP_K_MULTIPLIER: ${RERANK_TOP_K_MULTIPLIER:-3}
+  TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+  NEWSAPI_API_KEY: ${NEWSAPI_API_KEY:-}
+  NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+  ARTICLE_RETENTION_DAYS: ${ARTICLE_RETENTION_DAYS:-90}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  MARKDOWN_OUTPUT_PATH: ${MARKDOWN_OUTPUT_PATH:-data/markdown}
+  OUTPUT_PATH: ${OUTPUT_PATH:-output}
+  UPLOAD_STORAGE_ROOT: ${UPLOAD_STORAGE_ROOT:-storage}
+  UPLOAD_MAX_FILE_SIZE_MB: ${UPLOAD_MAX_FILE_SIZE_MB:-50}
+  UPLOAD_MAX_BATCH_SIZE_MB: ${UPLOAD_MAX_BATCH_SIZE_MB:-200}
+  UPLOAD_MAX_ARCHIVE_FILES: ${UPLOAD_MAX_ARCHIVE_FILES:-200}
+  UPLOAD_MAX_ARCHIVE_UNPACKED_MB: ${UPLOAD_MAX_ARCHIVE_UNPACKED_MB:-500}
+  UPLOAD_ALLOWED_EXTENSIONS: ${UPLOAD_ALLOWED_EXTENSIONS:-txt,md,markdown,html,htm,csv,tsv,zip}
+  FETCH_INTERVAL_HOURS: ${FETCH_INTERVAL_HOURS:-4}
+  MAX_ARTICLES_PER_FETCH: ${MAX_ARTICLES_PER_FETCH:-20}
+  INTEL_CLASSIFICATION_ENABLED: ${INTEL_CLASSIFICATION_ENABLED:-true}
+  CHUNK_MAX_CHILD_TOKENS: ${CHUNK_MAX_CHILD_TOKENS:-512}
+  CHUNK_TARGET_PARENT_TOKENS: ${CHUNK_TARGET_PARENT_TOKENS:-1024}
+  CHUNK_OVERLAP_TOKENS: ${CHUNK_OVERLAP_TOKENS:-100}
+  HYBRID_SEARCH_ENABLED: ${HYBRID_SEARCH_ENABLED:-true}
+  HYBRID_RRF_K: ${HYBRID_RRF_K:-60}
+  HYBRID_VECTOR_WEIGHT: ${HYBRID_VECTOR_WEIGHT:-1.0}
+  HYBRID_KEYWORD_WEIGHT: ${HYBRID_KEYWORD_WEIGHT:-1.0}
+  HYBRID_KEYWORD_CANDIDATES: ${HYBRID_KEYWORD_CANDIDATES:-20}
+
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -17,10 +84,22 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/6333'"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -28,8 +107,8 @@ services:
   migrate:
     build: .
     restart: "no"
-    env_file:
-      - ${LOGOS_ENV_FILE:-.env}
+    environment:
+      <<: *app-env
     volumes:
       - ./${LOGOS_ENV_FILE:-.env}:/app/.env
       - logos_data:/app/data
@@ -42,8 +121,8 @@ services:
   web:
     build: .
     restart: unless-stopped
-    env_file:
-      - ${LOGOS_ENV_FILE:-.env}
+    environment:
+      <<: *app-env
     volumes:
       - ./${LOGOS_ENV_FILE:-.env}:/app/.env
       - logos_data:/app/data
@@ -53,6 +132,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -66,8 +147,8 @@ services:
   worker:
     build: .
     restart: unless-stopped
-    env_file:
-      - ${LOGOS_ENV_FILE:-.env}
+    environment:
+      <<: *app-env
     volumes:
       - ./${LOGOS_ENV_FILE:-.env}:/app/.env
       - logos_data:/app/data
@@ -78,14 +159,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      qdrant:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
 
   beat:
     build: .
     restart: unless-stopped
-    env_file:
-      - ${LOGOS_ENV_FILE:-.env}
+    environment:
+      <<: *app-env
     volumes:
       - ./${LOGOS_ENV_FILE:-.env}:/app/.env
       - logos_data:/app/data
@@ -96,6 +179,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -118,22 +203,10 @@ services:
       web:
         condition: service_healthy
 
-  flower:
-    build: .
-    profiles: ["monitoring"]
-    restart: unless-stopped
-    env_file:
-      - ${LOGOS_ENV_FILE:-.env}
-    command: ["celery", "-A", "scheduler.celery_app", "flower", "--port=5555"]
-    depends_on:
-      redis:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-
 volumes:
   postgres_data:
   redis_data:
+  qdrant_data:
   logos_data:
   logos_output:
   celerybeat_data:

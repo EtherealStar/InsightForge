@@ -3,26 +3,26 @@
   <aside class="sidebar" :class="{ collapsed: isCollapsed, 'mobile-open': mobileOpen }">
     <div class="sidebar-header">
       <div class="logo">
-        <span class="logo-icon"></span>
+        <span class="logo-icon"><SvgIcon name="dashboard" :size="24" /></span>
         <transition name="fade">
-          <span v-if="!isCollapsed" class="logo-text">Logos</span>
+          <span v-if="!isCollapsed" class="logo-text">InsightForge</span>
         </transition>
       </div>
       <button class="btn-icon collapse-btn" @click="isCollapsed = !isCollapsed" title="收起/展开">
-        {{ isCollapsed ? '›' : '‹' }}
+        <SvgIcon :name="isCollapsed ? 'chevronRight' : 'chevronLeft'" :size="18" />
       </button>
     </div>
 
     <nav class="sidebar-nav">
       <router-link
-        v-for="item in navItems"
+        v-for="item in visibleNavItems"
         :key="item.path"
         :to="item.path"
         class="nav-item"
         :class="{ active: $route.path === item.path }"
         @click="$emit('closeMobile')"
       >
-        <span class="nav-icon">{{ item.icon }}</span>
+        <span class="nav-icon"><SvgIcon :name="item.icon" :size="20" /></span>
         <transition name="fade">
           <span v-if="!isCollapsed" class="nav-label">{{ item.label }}</span>
         </transition>
@@ -30,26 +30,17 @@
     </nav>
 
     <div class="sidebar-footer" v-if="!isCollapsed">
-      <div class="stats-mini" v-if="stats">
-        <div class="stat-row">
-          <span class="stat-label">文章总数</span>
-          <span class="stat-value">{{ stats.total }}</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">今日新增</span>
-          <span class="stat-value accent">{{ stats.today_new }}</span>
-        </div>
-      </div>
       <div class="version-info">
-        <span>Logos v1.0</span>
+        <span>InsightForge v2.0</span>
       </div>
     </div>
   </aside>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { newsApi } from '../api'
+import { computed, ref } from 'vue'
+import { hasRole } from '../auth'
+import SvgIcon from './icons/SvgIcon.vue'
 
 defineProps({
   mobileOpen: { type: Boolean, default: false },
@@ -57,27 +48,21 @@ defineProps({
 defineEmits(['closeMobile'])
 
 const isCollapsed = ref(false)
-const stats = ref(null)
 
 const navItems = [
-  { path: '/news', icon: '', label: '新闻展示' },
-  { path: '/briefs', icon: '', label: '新闻简报' },
-  { path: '/newsapi', icon: '', label: '在线搜索' },
-  { path: '/query', icon: '', label: '智能助手' },
-  { path: '/memory', icon: '', label: '记忆管理' },
-  { path: '/webhook', icon: '', label: '消息推送' },
-  { path: '/settings', icon: '', label: '功能设置' },
-  { path: '/config', icon: '', label: 'API 配置' },
+  { path: '/dashboard', icon: 'dashboard', label: '工作台', role: 'viewer' },
+  { path: '/competitors', icon: 'competitor', label: '竞品管理', role: 'viewer' },
+  { path: '/intel', icon: 'intel', label: '结构化情报', role: 'viewer' },
+  { path: '/reports', icon: 'report', label: '分析报告', role: 'viewer' },
+  { path: '/tasks', icon: 'task', label: '任务追踪', role: 'viewer' },
+  { path: '/query', icon: 'search', label: '智能分析', role: 'analyst' },
+  { path: '/memory', icon: 'memory', label: '记忆管理', role: 'viewer' },
+  { path: '/webhook', icon: 'webhook', label: '消息推送', role: 'viewer' },
+  { path: '/settings', icon: 'settings', label: '功能设置', role: 'viewer' },
+  { path: '/config', icon: 'config', label: 'API 配置', role: 'admin' },
 ]
 
-onMounted(async () => {
-  try {
-    const res = await newsApi.getStats()
-    stats.value = res.data
-  } catch {
-    // 静默处理
-  }
-})
+const visibleNavItems = computed(() => navItems.filter((item) => hasRole(item.role)))
 </script>
 
 <style scoped>
@@ -115,7 +100,8 @@ onMounted(async () => {
   gap: var(--space-sm);
 }
 .logo-icon {
-  font-size: 1.5rem;
+  display: inline-flex;
+  color: var(--accent-primary);
 }
 .logo-text {
   font-size: 1.25rem;
@@ -182,10 +168,11 @@ onMounted(async () => {
 }
 
 .nav-icon {
-  font-size: 1.125rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   width: 24px;
-  text-align: center;
 }
 .nav-label {
   font-size: 0.875rem;

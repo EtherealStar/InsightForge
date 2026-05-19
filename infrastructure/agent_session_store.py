@@ -50,7 +50,18 @@ CREATE INDEX IF NOT EXISTS idx_agent_sessions_session_type
     ON agent_sessions(session_type);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_type_updated
     ON agent_sessions(session_type, updated_at DESC);
+"""
 
+_ALTER_TABLE_SQL = """
+ALTER TABLE agent_sessions
+    ADD COLUMN IF NOT EXISTS summary TEXT,
+    ADD COLUMN IF NOT EXISTS summary_template TEXT,
+    ADD COLUMN IF NOT EXISTS token_count INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS last_compacted_tokens INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS compact_failures INTEGER NOT NULL DEFAULT 0;
+"""
+
+_COMMENT_SQL = """
 COMMENT ON TABLE agent_sessions IS 'Agent 会话记录。保存 Plan Execute 深度研究的消息、计划、todo、执行事件与最终报告索引。';
 COMMENT ON COLUMN agent_sessions.id IS '会话 UUID，同时作为前端会话标识和 Agent run_id';
 COMMENT ON COLUMN agent_sessions.session_type IS '会话类型，当前固定为 research_plan_execute';
@@ -74,15 +85,6 @@ COMMENT ON COLUMN agent_sessions.started_at IS '执行开始时间';
 COMMENT ON COLUMN agent_sessions.completed_at IS '执行结束时间';
 """
 
-_ALTER_TABLE_SQL = """
-ALTER TABLE agent_sessions
-    ADD COLUMN IF NOT EXISTS summary TEXT,
-    ADD COLUMN IF NOT EXISTS summary_template TEXT,
-    ADD COLUMN IF NOT EXISTS token_count INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS last_compacted_tokens INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS compact_failures INTEGER NOT NULL DEFAULT 0;
-"""
-
 
 class AgentSessionStore:
     """PostgreSQL 会话持久化，Redis 可用时作为执行期缓存。"""
@@ -104,6 +106,7 @@ class AgentSessionStore:
                 with conn.cursor() as cur:
                     cur.execute(_CREATE_TABLE_SQL)
                     cur.execute(_ALTER_TABLE_SQL)
+                    cur.execute(_COMMENT_SQL)
             logger.info("agent_session_store.init_complete")
         except Exception as e:
             logger.error("agent_session_store.init_failed", error=str(e))

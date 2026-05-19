@@ -24,7 +24,7 @@ Frontend → Delivery → Agent/Tools → Services → Infrastructure
 
 ### 3. 工厂函数 + ConfigManager 单例
 
-不使用 DI 框架。`core/factory.py` 提供 8 个工厂函数，`ConfigManager` 缓存组件实例并支持热重载。
+不使用 DI 框架。`core/factory.py` 提供基础设施和 Service 层工厂函数，`ConfigManager` 缓存组件实例并支持热重载。
 
 → 详见 [技术决策 ADR-002](design-docs/tech-decisions.md#adr-002-工厂函数而非-di-容器)
 
@@ -39,6 +39,6 @@ Frontend → Delivery → Agent/Tools → Services → Infrastructure
 ## 设计文档导航
 
 - [技术选型论证](design-docs/tech-decisions.md) — 每个选型的完整 trade-off 分析
-- [Protocol 接口契约](design-docs/protocol-contracts.md) — 5 个核心接口的详细设计
+- [Protocol 接口契约](design-docs/protocol-contracts.md) — 核心接口的详细设计
 - [ReAct Agent 设计](design-docs/react-agent.md) — Agent 推理循环与工具系统
 - [架构变更历史](design-docs/changelog.md) — 所有重大架构变更记录

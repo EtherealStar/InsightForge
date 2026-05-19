@@ -1,255 +1,370 @@
-"""编排 抓取 → Markdown转换 → 存储 → 分块 → 向量化 的完整流水线"""
+"""Intelligence ingestion pipeline.
+
+RSS/web collection -> Markdown -> SourceDocument -> parent/child chunks ->
+Qdrant vectorization -> structured intel facts -> fact links.
+"""
 from __future__ import annotations
 
+import hashlib
+from typing import Any, TYPE_CHECKING
+from uuid import NAMESPACE_URL, uuid5
+
 import structlog
-from typing import TYPE_CHECKING
 
 from core.protocols import (
-    ArticleStoreProtocol,
-    VectorStoreProtocol,
+    DocumentStoreProtocol,
     EmbeddingClientProtocol,
+    RedisStateStoreProtocol,
+    VectorIndexProtocol,
 )
 from infrastructure.collector import NewsCollector
 from infrastructure.markdown_converter import NewsMarkdownConverter
 
 if TYPE_CHECKING:
-    from infrastructure.web_crawler import WebCrawler
     from infrastructure.chunking_service import ChunkingService
-    from services.summary_service import SummaryService
+    from infrastructure.web_crawler import WebCrawler
+    from models.document import SourceDocument
+    from services.task_run_reporter import TaskRunReporter
 
 logger = structlog.get_logger(__name__)
 
 
 class PipelineService:
-    """编排 抓取 → Markdown转换 → 存储 → 分块 → 向量化 的完整流水线"""
+    """Run the Phase 2 ingestion and structured fact extraction flow."""
 
     def __init__(
         self,
         collector: NewsCollector,
-        article_store: ArticleStoreProtocol,
-        vector_store: VectorStoreProtocol,
+        document_store: DocumentStoreProtocol,
+        vector_index: VectorIndexProtocol,
         embedding_client: EmbeddingClientProtocol,
         chunking_service: "ChunkingService | None" = None,
         web_crawler: "WebCrawler | None" = None,
         crawl_sites: list[dict] | None = None,
         markdown_converter: NewsMarkdownConverter | None = None,
         markdown_output_path: str | None = None,
-        summary_service: "SummaryService | None" = None,
+        intel_service: Any | None = None,
+        competitor_service: Any | None = None,
+        task_reporter: "TaskRunReporter | None" = None,
+        redis_state_store: RedisStateStoreProtocol | None = None,
     ):
         self.collector = collector
-        self.article_store = article_store
-        self.vector_store = vector_store
+        self.document_store = document_store
+        self.vector_index = vector_index
         self.embedding_client = embedding_client
         self.chunking_service = chunking_service
         self.web_crawler = web_crawler
         self.crawl_sites = crawl_sites or []
         self.md_converter = markdown_converter or NewsMarkdownConverter()
         self.markdown_output_path = markdown_output_path
-        self.summary_service = summary_service
-
-    def _collect_all(self) -> tuple[list, list[str]]:
-        """从所有数据源（RSS + 网页爬取）汇总文章"""
-        articles = []
-        errors = []
-
-        # RSS 抓取
-        try:
-            rss_articles = self.collector.fetch_all()
-            articles.extend(rss_articles)
-            logger.info(f"[Collect] RSS 抓取完成: {len(rss_articles)} 篇")
-        except Exception as e:
-            msg = f"RSS 抓取阶段失败: {e}"
-            logger.error(f"[Collect] {msg}")
-            errors.append(msg)
-
-        # 网页爬取
-        if self.web_crawler and self.crawl_sites:
-            try:
-                web_articles, web_errors = self.web_crawler.crawl_all(self.crawl_sites)
-                articles.extend(web_articles)
-                if web_errors:
-                    errors.extend(web_errors)
-                logger.info(f"[Collect] 网页爬取完成: {len(web_articles)} 篇")
-            except Exception as e:
-                msg = f"网页爬取阶段总控失败: {e}"
-                logger.error(f"[Collect] {msg}")
-                errors.append(msg)
-
-        return articles, errors
+        self.intel_service = intel_service
+        self.competitor_service = competitor_service
+        self.task_reporter = task_reporter
+        self.redis_state_store = redis_state_store
 
     def run(self) -> dict:
-        """
-        执行完整 Pipeline：
-        1. 抓取新闻（RSS + 网页爬取）
-        2. HTML → Markdown 转换 + 元数据提取
-        3. 存储到数据库（content 为 Markdown 格式）
-        4. 可选：保存 Markdown 文件到磁盘
-        5. AI 摘要 + 打标签（新增）
-        6. 获取已摘要未向量化文章
-        7. 分块：按 Markdown 章节切分为父子 chunks
-        8. 生成子 chunk Embedding
-        9. 子 chunk 向量 + 父 chunk 写入 PostgreSQL
-        10. 标记为已向量化
-
-        每步独立 try/except，失败记日志但不终止后续步骤。
-        返回 {"fetched": int, "new": int, "summarized": int, "summary_failed": int,
-               "chunks": int, "parent_chunks": int, "embedded": int, "errors": list[str]}
-        """
         result = {
-            "fetched": 0, "new": 0, "summarized": 0, "summary_failed": 0,
-            "chunks": 0, "parent_chunks": 0, "embedded": 0,
-            "skipped_non_articles": 0, "errors": [],
+            "fetched": 0,
+            "new": 0,
+            "documents": 0,
+            "chunks": 0,
+            "parent_chunks": 0,
+            "embedded": 0,
+            "facts_created": 0,
+            "facts_updated": 0,
+            "facts_skipped": 0,
+            "fact_extract_failed": 0,
+            "intel_linked": 0,
+            "skipped_non_articles": 0,
+            "errors": [],
         }
 
-        # Step 1: 抓取（RSS + 网页爬取）
+        stage = self._start_stage("collect")
         articles, collect_errors = self._collect_all()
         result["fetched"] = len(articles)
         result["errors"].extend(collect_errors)
+        self._finish_stage(
+            stage,
+            "succeeded" if not collect_errors else "failed",
+            {"fetched": len(articles), "errors": collect_errors},
+        )
 
-        # Step 2: Markdown 转换
         if articles:
+            stage = self._start_stage("markdown", {"articles": len(articles)})
             try:
                 articles = self.md_converter.convert_batch(articles)
                 articles, skipped = self._filter_indexable_articles(articles)
                 result["skipped_non_articles"] += skipped
-                logger.info(f"[Pipeline] Markdown 转换完成: {len(articles)} 篇")
-            except Exception as e:
-                msg = f"Markdown 转换阶段失败: {e}"
-                logger.error(f"[Pipeline] {msg}")
+                self._finish_stage(
+                    stage,
+                    "succeeded",
+                    {"articles": len(articles), "skipped_non_articles": skipped},
+                )
+            except Exception as exc:
+                msg = f"Markdown 转换阶段失败: {exc}"
+                logger.error("[Pipeline] %s", msg)
                 result["errors"].append(msg)
+                self._finish_stage(stage, "failed", error={"message": msg})
+                articles = []
 
-        # Step 3: 存储
+        documents: list[SourceDocument] = []
         if articles:
+            stage = self._start_stage("store_source_documents", {"articles": len(articles)})
             try:
-                new_count = self.article_store.save_articles(articles)
-                result["new"] = new_count
-                logger.info(f"[Pipeline] 存储完成: {new_count} 篇新文章")
-            except Exception as e:
-                msg = f"存储阶段失败: {e}"
-                logger.error(f"[Pipeline] {msg}")
-                result["errors"].append(msg)
-
-        # Step 4: 可选 — 保存 Markdown 文件到磁盘
-        if articles and self.markdown_output_path:
-            try:
-                paths = self.md_converter.save_batch_as_files(
-                    articles, self.markdown_output_path
+                documents = [self._article_to_document(article) for article in articles]
+                for document in documents:
+                    self.document_store.save_document(document)
+                result["new"] = len(documents)
+                result["documents"] = len(documents)
+                self._finish_stage(
+                    stage,
+                    "succeeded",
+                    {"documents": len(documents), "new": result["new"]},
                 )
-                logger.info(
-                    f"[Pipeline] Markdown 文件保存: {len(paths)} 篇"
-                )
-            except Exception as e:
-                msg = f"Markdown 文件保存失败: {e}"
-                logger.error(f"[Pipeline] {msg}")
+            except Exception as exc:
+                msg = f"SourceDocument 入库阶段失败: {exc}"
+                logger.error("[Pipeline] %s", msg)
                 result["errors"].append(msg)
+                self._finish_stage(stage, "failed", error={"message": msg})
+                documents = []
 
-        # Step 5: AI 摘要 + 打标签
-        # 临时跳过AI摘要
-        if False and self.summary_service:
-            try:
-                summary_result = self.summary_service.summarize_pending()
-                result["summarized"] = summary_result.get("success", 0)
-                result["summary_failed"] = summary_result.get("failed", 0)
-                logger.info(
-                    f"[Pipeline] AI 摘要完成: 成功 {result['summarized']}，"
-                    f"失败 {result['summary_failed']}"
-                )
-            except Exception as e:
-                msg = f"AI 摘要阶段失败: {e}"
-                logger.error(f"[Pipeline] {msg}")
-                result["errors"].append(msg)
-        else:
-            # 无摘要服务时，直接将 pending_summary 标记为 summarized
-            try:
-                pending = self.article_store.get_pending_summary()
-                if pending:
-                    ids = [a.id for a in pending if a.id is not None]
-                    self.article_store.mark_summarized(ids)
-                    logger.info(f"[Pipeline] 无摘要服务，直接标记 {len(ids)} 篇为 summarized")
-            except Exception as e:
-                msg = f"标记 summarized 失败: {e}"
-                logger.error(f"[Pipeline] {msg}")
-                result["errors"].append(msg)
-
-        # Step 6~10: 分块 + 向量化
+        vectorized_document_ids: list[str] = []
+        stage = self._start_stage("chunk_and_vectorize", {"documents": len(documents)})
         try:
-            pending = self.article_store.get_unembedded()
-            if pending:
-                logger.info(f"[Pipeline] 待向量化: {len(pending)} 篇")
-
-                if self.chunking_service:
-                    # 新版：分块 → 向量化
-                    embedded_count = self._embed_with_chunks(pending, result)
-                else:
-                    # 回退：无分块服务时整篇向量化（兼容）
-                    logger.warning("[Pipeline] 未配置分块服务，跳过向量化")
-                    embedded_count = 0
-
-                embedded_article_ids = result.pop("_embedded_article_ids", [])
-                if embedded_article_ids:
-                    self.article_store.mark_embedded(embedded_article_ids)
+            if documents and self.chunking_service:
+                embedded_count = self._embed_documents(documents, result)
                 result["embedded"] = embedded_count
-                logger.info(f"[Pipeline] 向量化完成: {embedded_count} 个子 chunks")
-            else:
-                logger.info("[Pipeline] 无待向量化文章")
-        except Exception as e:
-            msg = f"向量化阶段失败: {e}"
-            logger.error(f"[Pipeline] {msg}")
+                vectorized_document_ids = result.pop("_vectorized_document_ids", [])
+            elif documents:
+                msg = "未配置分块服务，跳过向量化"
+                logger.warning("[Pipeline] %s", msg)
+                result["errors"].append(msg)
+            self._finish_stage(
+                stage,
+                "succeeded",
+                {
+                    "chunks": result["chunks"],
+                    "parent_chunks": result["parent_chunks"],
+                    "embedded": result["embedded"],
+                    "documents": len(vectorized_document_ids),
+                },
+            )
+        except Exception as exc:
+            msg = f"分块向量化阶段失败: {exc}"
+            logger.error("[Pipeline] %s", msg)
             result["errors"].append(msg)
+            self._finish_stage(stage, "failed", error={"message": msg})
 
-        logger.info(f"[Pipeline] 完成: {result}")
+        stage = self._start_stage(
+            "extract_intel_facts", {"documents": len(vectorized_document_ids)}
+        )
+        extract_result = self._extract_intel_facts(vectorized_document_ids, result)
+        self._finish_stage(
+            stage,
+            "succeeded" if extract_result["failed"] == 0 else "failed",
+            extract_result,
+            error=None if extract_result["failed"] == 0 else {"failed": extract_result["failed"]},
+        )
+
+        stage = self._start_stage("link_facts", {"documents": len(vectorized_document_ids)})
+        try:
+            if self.competitor_service and vectorized_document_ids:
+                link_result = self.competitor_service.auto_link_facts(
+                    document_ids=vectorized_document_ids
+                )
+                result["intel_linked"] = link_result.get("linked", 0)
+            else:
+                link_result = {
+                    "linked": 0,
+                    "facts_processed": 0,
+                    "reason": "missing_service_or_documents",
+                }
+            self._finish_stage(stage, "succeeded", link_result)
+        except Exception as exc:
+            msg = f"fact 竞品关联失败: {exc}"
+            logger.error("[Pipeline] %s", msg)
+            result["errors"].append(msg)
+            self._finish_stage(stage, "failed", error={"message": msg})
+
+        logger.info("[Pipeline] 完成: %s", result)
         return result
 
-    def _embed_with_chunks(self, articles: list, result: dict) -> int:
-        """分块 → Embedding → 写入 PostgreSQL。
+    def _collect_all(self) -> tuple[list, list[str]]:
+        articles = []
+        errors = []
+        try:
+            rss_articles = self.collector.fetch_all()
+            articles.extend(rss_articles)
+            logger.info("[Collect] RSS 抓取完成: %s 篇", len(rss_articles))
+        except Exception as exc:
+            msg = f"RSS 抓取阶段失败: {exc}"
+            logger.error("[Collect] %s", msg)
+            errors.append(msg)
 
-        Args:
-            articles: 待向量化的文章列表。
-            result: Pipeline 结果字典（用于回填 chunks/parent_chunks 计数）。
+        if self.web_crawler and self.crawl_sites:
+            try:
+                web_articles, web_errors = self.web_crawler.crawl_all(self.crawl_sites)
+                articles.extend(web_articles)
+                errors.extend(web_errors or [])
+                logger.info("[Collect] 网页爬取完成: %s 篇", len(web_articles))
+            except Exception as exc:
+                msg = f"网页爬取阶段总控失败: {exc}"
+                logger.error("[Collect] %s", msg)
+                errors.append(msg)
+        return articles, errors
 
-        Returns:
-            写入的子 chunk 数量。
-        """
-        # 1. 分块
-        all_children, all_parents = self.chunking_service.chunk_articles(articles)
-        result["chunks"] = len(all_children)
-        result["parent_chunks"] = len(all_parents)
+    def _embed_documents(self, documents: list["SourceDocument"], result: dict) -> int:
+        lock_owner = str(
+            uuid5(
+                NAMESPACE_URL,
+                "pipeline-vectorize:" + ",".join(d.document_id for d in documents),
+            )
+        )
+        lock_keys: list[str] = []
+        redis_healthy = bool(
+            self.redis_state_store and self.redis_state_store.healthcheck()
+        )
+        try:
+            if redis_healthy and self.redis_state_store:
+                for document in documents:
+                    lock_key = f"logos:lock:vectorize:{document.document_id}"
+                    if not self.redis_state_store.acquire_lock(
+                        lock_key,
+                        lock_owner,
+                        ttl_seconds=3600,
+                    ):
+                        raise RuntimeError(f"文档正在向量化: {document.document_id}")
+                    lock_keys.append(lock_key)
 
-        if not all_children:
-            logger.warning("[Pipeline] 分块后无子 chunks")
-            return 0
+            all_children, all_parents = self.chunking_service.chunk_documents(documents)
+            self._event(
+                "chunk",
+                {
+                    "documents": len(documents),
+                    "children": len(all_children),
+                    "parents": len(all_parents),
+                },
+            )
+            result["chunks"] = len(all_children)
+            result["parent_chunks"] = len(all_parents)
 
-        # 2. 父 chunk 先写入 PostgreSQL，避免 child_chunks 外键指向不存在的父块
-        if all_parents:
-            saved_parents = self.article_store.save_parent_chunks(all_parents)
-            if isinstance(saved_parents, int) and saved_parents < len(all_parents):
+            if not all_children:
+                logger.warning("[Pipeline] 分块后无子 chunks")
+                return 0
+
+            if all_parents:
+                saved_parents = self.document_store.save_parent_chunks(all_parents)
+                if isinstance(saved_parents, int) and saved_parents < len(all_parents):
+                    raise RuntimeError(
+                        f"父 chunk 写入不完整: {saved_parents}/{len(all_parents)}"
+                    )
+
+            embeddings = self.embedding_client.embed([child.content for child in all_children])
+            self._event(
+                "embed",
+                {"children": len(all_children), "embeddings": len(embeddings)},
+            )
+            if len(embeddings) != len(all_children):
                 raise RuntimeError(
-                    f"父 chunk 写入不完整: {saved_parents}/{len(all_parents)}"
+                    f"Embedding 数量不匹配: {len(embeddings)}/{len(all_children)}"
                 )
 
-        # 3. 生成子 chunk embedding
-        child_texts = [c.content for c in all_children]
-        embeddings = self.embedding_client.embed(child_texts)
-        if len(embeddings) != len(all_children):
-            raise RuntimeError(
-                f"Embedding 数量不匹配: {len(embeddings)}/{len(all_children)}"
-            )
+            embedded_count = self.vector_index.upsert_child_chunks(all_children, embeddings)
+            self._event("qdrant_upsert", {"points": embedded_count})
+            if embedded_count != len(all_children):
+                raise RuntimeError(
+                    f"子 chunk 写入不完整: {embedded_count}/{len(all_children)}"
+                )
+            self.document_store.mark_points_vectorized(all_children)
+            self._event("mark_vectorized", {"points": len(all_children)})
 
-        # 4. 子 chunk 向量写入 PostgreSQL/pgvector
-        embedded_count = self.vector_store.add_chunks(all_children, embeddings)
-        if embedded_count != len(all_children):
-            raise RuntimeError(
-                f"子 chunk 写入不完整: {embedded_count}/{len(all_children)}"
-            )
+            document_ids = sorted({document.document_id for document in documents})
+            for document_id in document_ids:
+                self.document_store.update_parse_status(document_id, "vectorized")
+            result["_vectorized_document_ids"] = document_ids
+            return embedded_count
+        except Exception as exc:
+            if "all_children" in locals() and all_children:
+                self.document_store.mark_points_vector_failed(
+                    [child.point_id for child in all_children],
+                    {"message": str(exc)},
+                )
+            for document in documents:
+                try:
+                    self.document_store.update_parse_status(
+                        document.document_id,
+                        "failed",
+                        {"message": str(exc)},
+                    )
+                except Exception:
+                    logger.exception("document status update failed")
+            raise
+        finally:
+            if self.redis_state_store:
+                for lock_key in lock_keys:
+                    self.redis_state_store.release_lock(lock_key, lock_owner)
 
-        result["_embedded_article_ids"] = sorted(
-            {child.article_id for child in all_children if child.article_id}
+    def _extract_intel_facts(self, document_ids: list[str], result: dict) -> dict:
+        if not document_ids:
+            return {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
+        if not self.intel_service:
+            return {
+                "created": 0,
+                "updated": 0,
+                "skipped": 0,
+                "failed": len(document_ids),
+                "reason": "intel_service_missing",
+            }
+        created = updated = skipped = failed = 0
+        for document_id in document_ids:
+            try:
+                item = self.intel_service.extract_facts_from_document(document_id)
+                created += item.get("created", 0)
+                updated += item.get("updated", 0)
+                skipped += item.get("skipped", 0)
+            except Exception as exc:
+                failed += 1
+                msg = f"事实抽取失败({document_id}): {exc}"
+                logger.error("[Pipeline] %s", msg)
+                result["errors"].append(msg)
+        result["facts_created"] = created
+        result["facts_updated"] = updated
+        result["facts_skipped"] = skipped
+        result["fact_extract_failed"] = failed
+        return {"created": created, "updated": updated, "skipped": skipped, "failed": failed}
+
+    @staticmethod
+    def _article_to_document(article):
+        from models.document import SourceDocument
+
+        source_key = article.url or f"{article.source}:{article.title}"
+        document_id = str(uuid5(NAMESPACE_URL, source_key))
+        content = article.content or ""
+        return SourceDocument(
+            document_id=document_id,
+            title=article.title or "Untitled",
+            content=content,
+            source_type="rss" if article.source else "web",
+            document_type="article",
+            url=article.url or "",
+            canonical_url=article.url or "",
+            language=getattr(article.language, "value", article.language) or "",
+            content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            metadata={
+                "source": article.source or "",
+                "author": article.author or "",
+                "tags": article.tags or [],
+                "semantic_blocks": getattr(article, "semantic_blocks", None),
+                "semantic_skip_indexing": getattr(
+                    article, "semantic_skip_indexing", False
+                ),
+            },
+            published_at=article.published_at,
+            parse_status="parsed",
         )
-        return embedded_count
 
     @staticmethod
     def _filter_indexable_articles(articles: list) -> tuple[list, int]:
-        """过滤转换器判定为非文章页的内容，避免污染向量库。"""
         indexable = [
             article
             for article in articles
@@ -257,57 +372,54 @@ class PipelineService:
         ]
         skipped = len(articles) - len(indexable)
         if skipped:
-            logger.info(f"[Pipeline] 跳过 {skipped} 篇非文章/低质量页面")
+            logger.info("[Pipeline] 跳过 %s 篇非文章/低质量页面", skipped)
         return indexable, skipped
 
-    def fetch_and_store(self) -> dict:
-        """
-        仅执行抓取 → Markdown转换 → 存储，不进行 AI 向量化分析。
-        用于系统启动时快速拉取最新新闻。
-        返回 {"fetched": int, "new": int, "errors": list[str]}
-        """
-        result = {"fetched": 0, "new": 0, "skipped_non_articles": 0, "errors": []}
+    def _start_stage(self, name: str, payload: dict | None = None):
+        return self.task_reporter.start_stage(name, payload) if self.task_reporter else None
 
+    def _finish_stage(
+        self,
+        stage,
+        status: str,
+        result: dict | None = None,
+        error: dict | None = None,
+    ) -> None:
+        if self.task_reporter:
+            self.task_reporter.finish_stage(stage, status, result=result, error=error)
+
+    def _event(self, event_type: str, payload: dict | None = None) -> None:
+        if self.task_reporter:
+            self.task_reporter.event(event_type, payload)
+
+    def fetch_and_store(self) -> dict:
+        result = {"fetched": 0, "new": 0, "skipped_non_articles": 0, "errors": []}
         articles, collect_errors = self._collect_all()
         result["fetched"] = len(articles)
         result["errors"].extend(collect_errors)
-
         if not articles:
             return result
-
-        # Markdown 转换
         try:
             articles = self.md_converter.convert_batch(articles)
             articles, skipped = self._filter_indexable_articles(articles)
             result["skipped_non_articles"] += skipped
-            logger.info(f"[FetchOnly] Markdown 转换完成: {len(articles)} 篇")
-        except Exception as e:
-            msg = f"Markdown 转换阶段失败: {e}"
-            logger.error(f"[FetchOnly] {msg}")
+        except Exception as exc:
+            msg = f"Markdown 转换阶段失败: {exc}"
+            logger.error("[FetchOnly] %s", msg)
             result["errors"].append(msg)
-
-        # 存储
         try:
-            new_count = self.article_store.save_articles(articles)
-            result["new"] = new_count
-            logger.info(f"[FetchOnly] 存储完成: {new_count} 篇新文章")
-        except Exception as e:
-            msg = f"存储阶段失败: {e}"
-            logger.error(f"[FetchOnly] {msg}")
+            for article in articles:
+                self.document_store.save_document(self._article_to_document(article))
+            result["new"] = len(articles)
+        except Exception as exc:
+            msg = f"存储阶段失败: {exc}"
+            logger.error("[FetchOnly] %s", msg)
             result["errors"].append(msg)
-
-        # 可选：保存 Markdown 文件
         if self.markdown_output_path:
             try:
-                paths = self.md_converter.save_batch_as_files(
-                    articles, self.markdown_output_path
-                )
-                logger.info(
-                    f"[FetchOnly] Markdown 文件保存: {len(paths)} 篇"
-                )
-            except Exception as e:
-                msg = f"Markdown 文件保存失败: {e}"
-                logger.error(f"[FetchOnly] {msg}")
+                self.md_converter.save_batch_as_files(articles, self.markdown_output_path)
+            except Exception as exc:
+                msg = f"Markdown 文件保存失败: {exc}"
+                logger.error("[FetchOnly] %s", msg)
                 result["errors"].append(msg)
-
         return result

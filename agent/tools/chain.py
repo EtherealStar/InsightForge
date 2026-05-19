@@ -84,9 +84,9 @@ class ToolChain:
     """工具链管理器 — 编排多个工具的有序执行。
 
     使用方式:
-        chain = ToolChain("新闻分析链")
-        chain.add_step("search_news", params={"query": "AI 新闻"})
-        chain.add_step("generate_brief", params={"articles": "$prev"})
+        chain = ToolChain("证据分析链")
+        chain.add_step("search_evidence", params={"query": "AI 新闻"})
+        chain.add_step("query_intel_facts", params={"competitor_ids": [1]})
         result = chain.run()
 
     Args:

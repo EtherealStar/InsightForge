@@ -1,3 +1,8 @@
+"""情报条目数据模型
+
+ArticleEntity 同时用作新闻文章和竞品情报的承载实体。
+竞品分析场景下，intel_type / competitor_ids 等字段提供情报分类与关联能力。
+"""
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,17 +18,35 @@ class Language(str, Enum):
 class ArticleStatus(str, Enum):
     RAW = "raw"
     STORED = "stored"
-    PENDING_SUMMARY = "pending_summary"  # 等待 AI 摘要
-    SUMMARIZED = "summarized"            # AI 摘要完成，等待向量化
     EMBEDDED = "embedded"
+
+
+class IntelType(str, Enum):
+    """竞品情报类型分类"""
+    PRICING = "pricing"            # 定价变动
+    FEATURE = "feature"            # 功能发布/更新
+    STRATEGY = "strategy"          # 战略动向
+    PARTNERSHIP = "partnership"    # 合作/并购
+    HIRING = "hiring"              # 招聘动向
+    FUNDING = "funding"            # 融资信息
+    MARKET = "market"              # 市场分析
+    REVIEW = "review"              # 用户评价/口碑
+    GENERAL = "general"            # 通用情报
 
 
 @dataclass
 class ArticleEntity:
-    """领域实体：一篇新闻文章
+    """领域实体：一条竞品情报 / 新闻文章
 
     content 字段存储 Markdown 格式的正文文本。
     html_content 仅在抓取阶段临时使用，存储到数据库时已清空。
+
+    竞品分析扩展字段：
+    - intel_type: 情报类型分类（AI 自动标注）
+    - competitor_ids: 关联的竞品 ID 列表
+    - product_ids: 关联的竞品产品 ID 列表
+    - source_reliability: 来源可信度评分 (0.0~1.0)
+    - analysis_notes: AI 分析批注
     """
 
     title: str
@@ -47,6 +70,13 @@ class ArticleEntity:
     id: int | None = None
     url_hash: str = ""
     status: ArticleStatus = ArticleStatus.RAW
+
+    # --- 竞品分析扩展字段 ---
+    intel_type: IntelType = IntelType.GENERAL
+    competitor_ids: list[int] = field(default_factory=list)
+    product_ids: list[int] = field(default_factory=list)
+    source_reliability: float = 0.0      # 来源可信度 0.0~1.0
+    analysis_notes: str = ""              # AI 分析批注
 
     def to_embedding_text(self, max_chars: int = 2000) -> str:
         """生成用于 Embedding 的文本（2000 字符 ≈ 500-700 中文 tokens）
@@ -134,8 +164,17 @@ class ArticleMapper:
             published_at=dto.published_at,
             created_at=dto.created_at,
             tags=dto.tags,
-            status=ArticleStatus(dto.status) if dto.status else ArticleStatus.STORED,
+            status=ArticleMapper._status_from_value(dto.status),
         )
+
+    @staticmethod
+    def _status_from_value(value: str | None) -> ArticleStatus:
+        if not value:
+            return ArticleStatus.STORED
+        try:
+            return ArticleStatus(value)
+        except ValueError:
+            return ArticleStatus.STORED
 
     @staticmethod
     def row_to_dto(row) -> ArticleDTO:

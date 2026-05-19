@@ -11,24 +11,24 @@ class TestQueryService:
     """QueryService 测试"""
 
     @pytest.fixture
-    def mock_article_store(self):
+    def mock_document_store(self):
         return MagicMock()
 
     @pytest.fixture
-    def mock_vector_store(self):
+    def mock_vector_index(self):
         return MagicMock()
 
     @pytest.fixture
     def service(
         self,
-        mock_article_store,
-        mock_vector_store,
+        mock_document_store,
+        mock_vector_index,
         mock_llm_client,
         mock_embedding_client,
     ):
         return QueryService(
-            mock_article_store,
-            mock_vector_store,
+            mock_document_store,
+            mock_vector_index,
             mock_llm_client,
             mock_embedding_client,
         )
@@ -60,8 +60,8 @@ class TestQueryService:
 
     def test_answer_agent_extracts_memory_after_persist(
         self,
-        mock_article_store,
-        mock_vector_store,
+        mock_document_store,
+        mock_vector_index,
         mock_llm_client,
         mock_embedding_client,
         monkeypatch,
@@ -71,8 +71,8 @@ class TestQueryService:
         session_store.create_general_session.return_value = session
         memory_service = MagicMock()
         service = QueryService(
-            mock_article_store,
-            mock_vector_store,
+            mock_document_store,
+            mock_vector_index,
             mock_llm_client,
             mock_embedding_client,
             session_store=session_store,
@@ -97,8 +97,8 @@ class TestQueryService:
 
     def test_answer_agent_stream_extracts_memory_after_persist(
         self,
-        mock_article_store,
-        mock_vector_store,
+        mock_document_store,
+        mock_vector_index,
         mock_llm_client,
         mock_embedding_client,
         monkeypatch,
@@ -108,8 +108,8 @@ class TestQueryService:
         session_store.create_general_session.return_value = session
         memory_service = MagicMock()
         service = QueryService(
-            mock_article_store,
-            mock_vector_store,
+            mock_document_store,
+            mock_vector_index,
             mock_llm_client,
             mock_embedding_client,
             session_store=session_store,
@@ -131,3 +131,31 @@ class TestQueryService:
             latest_question="问题",
             latest_answer="done",
         )
+
+    def test_answer_agent_bootstraps_builtin_tools(
+        self,
+        mock_document_store,
+        mock_vector_index,
+        mock_llm_client,
+        mock_embedding_client,
+        monkeypatch,
+    ):
+        config_manager = MagicMock()
+        config_manager.bootstrap_builtin_tools.return_value = 6
+        service = QueryService(
+            mock_document_store,
+            mock_vector_index,
+            mock_llm_client,
+            mock_embedding_client,
+            config_manager=config_manager,
+        )
+        expected = SimpleNamespace(answer="ok", events=[])
+        fake_agent = MagicMock()
+        fake_agent.run.return_value = expected
+        monkeypatch.setattr(service, "_build_memory_prompt", lambda *args, **kwargs: "prompt")
+        monkeypatch.setattr(service, "_build_agent", lambda **kwargs: fake_agent)
+
+        result = service.answer_agent("测试问题")
+
+        assert result is expected
+        config_manager.bootstrap_builtin_tools.assert_called_with(refresh=False)

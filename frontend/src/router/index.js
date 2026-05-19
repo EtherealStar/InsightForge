@@ -3,55 +3,67 @@ import { createRouter, createWebHistory } from 'vue-router'
 const routes = [
   {
     path: '/',
-    redirect: '/news',
+    redirect: '/dashboard',
   },
   {
-    path: '/news',
-    name: 'News',
-    component: () => import('../views/NewsView.vue'),
-    meta: { title: '新闻展示', icon: '' },
+    path: '/dashboard',
+    name: 'Dashboard',
+    component: () => import('../views/DashboardView.vue'),
+    meta: { title: '工作台', icon: 'dashboard' },
   },
   {
-    path: '/briefs',
-    name: 'Briefs',
-    component: () => import('../views/BriefView.vue'),
-    meta: { title: '新闻简报', icon: '' },
+    path: '/competitors',
+    name: 'Competitors',
+    component: () => import('../views/CompetitorView.vue'),
+    meta: { title: '竞品管理', icon: 'competitor' },
   },
   {
-    path: '/newsapi',
-    name: 'NewsApi',
-    component: () => import('../views/NewsApiView.vue'),
-    meta: { title: '在线搜索', icon: '' },
+    path: '/intel',
+    name: 'Intel',
+    component: () => import('../views/IntelView.vue'),
+    meta: { title: '结构化情报', icon: 'intel' },
+  },
+  {
+    path: '/reports',
+    name: 'Reports',
+    component: () => import('../views/ReportView.vue'),
+    meta: { title: '分析报告', icon: 'report' },
+  },
+  {
+    path: '/tasks',
+    name: 'Tasks',
+    component: () => import('../views/TaskView.vue'),
+    meta: { title: '任务追踪', icon: 'task' },
   },
   {
     path: '/query',
     name: 'Query',
     component: () => import('../views/QueryView.vue'),
-    meta: { title: '智能助手', icon: '' },
+    meta: { title: '智能分析', icon: 'search' },
   },
   {
     path: '/memory',
     name: 'Memory',
     component: () => import('../views/MemoryView.vue'),
-    meta: { title: '记忆管理', icon: '' },
+    meta: { title: '记忆管理', icon: 'memory' },
   },
   {
     path: '/webhook',
     name: 'Webhook',
     component: () => import('../views/WebhookView.vue'),
-    meta: { title: '消息推送', icon: '' },
+    meta: { title: '消息推送', icon: 'webhook' },
   },
   {
     path: '/settings',
     name: 'Settings',
     component: () => import('../views/SettingsView.vue'),
-    meta: { title: '功能设置', icon: '' },
+    meta: { title: '功能设置', icon: 'settings' },
   },
   {
     path: '/config',
     name: 'Config',
     component: () => import('../views/ConfigView.vue'),
-    meta: { title: 'API 配置', icon: '' },
+    meta: { title: 'API 配置', icon: 'config' },
   },
 ]
 
@@ -61,7 +73,7 @@ const router = createRouter({
 })
 
 router.afterEach((to) => {
-  document.title = `${to.meta.title || 'Logos'} — Logos AI 新闻助手`
+  document.title = `${to.meta.title || 'InsightForge'} — InsightForge AI 竞品分析`
 })
 
 export default router

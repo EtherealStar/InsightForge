@@ -19,6 +19,10 @@ class StoreError(NewsAssistantError):
     """存储相关错误"""
 
 
+class InfrastructureError(NewsAssistantError):
+    """基础设施组件错误（PostgreSQL、Redis、Qdrant 等）"""
+
+
 class EmbeddingError(NewsAssistantError):
     """向量化相关错误"""
 
@@ -29,6 +33,10 @@ class RerankError(NewsAssistantError):
 
 class LLMError(NewsAssistantError):
     """LLM 调用错误"""
+
+
+class StructuredExtractionError(LLMError):
+    """结构化抽取调用或 JSON 解析错误"""
 
 
 class RateLimitError(LLMError):

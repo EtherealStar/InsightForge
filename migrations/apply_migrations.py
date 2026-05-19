@@ -1,10 +1,10 @@
-"""执行数据库迁移脚本 — 初始化空库并添加 COMMENT 和 FK 约束。
+"""执行数据库迁移脚本。
 
 用法:
     python migrations/apply_migrations.py
 
-从 .env 读取 PG_DSN，先用当前存储实现创建基础表，再按文件名顺序执行
-migrations/*.sql。脚本要求迁移 SQL 可重复执行。
+从 .env 读取 PG_DSN，按文件名顺序执行 migrations/*.sql。
+脚本要求迁移 SQL 可重复执行；Store 初始化不得执行生产 DDL。
 """
 
 import glob
@@ -21,22 +21,6 @@ if PROJECT_ROOT not in sys.path:
 # Windows 终端 UTF-8 输出
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-
-def init_schema(dsn: str) -> None:
-    """Create the base schema required by SQL migrations."""
-    from core.config import AppConfig
-    from infrastructure.agent_session_store import AgentSessionStore
-    from infrastructure.memory_store import MemoryStore
-    from infrastructure.pgvector_store import PgVectorStore
-    from infrastructure.postgres_article_store import PostgresArticleStore
-
-    config = AppConfig()
-    PostgresArticleStore(dsn)
-    PgVectorStore(dsn, vector_size=config.embedding_vector_size)
-    AgentSessionStore(dsn, redis_url=None)
-    MemoryStore(dsn)
-    print("基础表初始化完成")
 
 
 def main():
@@ -57,7 +41,6 @@ def main():
 
     print(f"连接数据库: {dsn.split('@')[1] if '@' in dsn else dsn}")
     try:
-        init_schema(dsn)
         with psycopg2.connect(dsn) as conn:
             conn.autocommit = True
             with conn.cursor() as cur:

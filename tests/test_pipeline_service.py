@@ -1,221 +1,237 @@
-"""PipelineService 集成测试"""
-import pytest
-from unittest.mock import MagicMock, patch
+"""PipelineService tests for document parent chunks + Qdrant child points."""
 
-from services.pipeline_service import PipelineService
-from models.article import Article, Language
 from datetime import datetime
+from unittest.mock import MagicMock
+
+from models.article import Article, Language
+from models.document import ChildChunkPoint, ParentDocumentChunk
+from models.task_run import TaskEvent, TaskRun, TaskStage
+from services.pipeline_service import PipelineService
+from services.task_run_reporter import TaskRunReporter
 
 
-class TestPipelineService:
-    """PipelineService 测试"""
+def _article(article_id: int = 1) -> Article:
+    return Article(
+        id=article_id,
+        title="Pipeline Test",
+        url="https://example.com/pipeline",
+        content="Pipeline test content",
+        source="PipelineSource",
+        language=Language.EN,
+        published_at=datetime.now(),
+    )
 
-    @pytest.fixture
-    def store(self):
-        store = MagicMock()
-        store.save_articles.return_value = 1
-        store.save_parent_chunks.return_value = 1
-        store.get_unembedded.return_value = [
-            Article(
-                id=1,
-                title="Pipeline Test",
-                url="https://example.com/pipeline",
-                content="Pipeline test content",
-                source="PipelineSource",
-                language=Language.EN,
-                published_at=datetime.now(),
-            )
-        ]
-        return store
 
-    @pytest.fixture
-    def mock_collector(self):
-        collector = MagicMock()
-        collector.fetch_all.return_value = [
-            Article(
-                title="Pipeline Test",
-                url="https://example.com/pipeline",
-                content="Pipeline test content",
-                source="PipelineSource",
-                language=Language.EN,
-                published_at=datetime.now(),
-            ),
-        ]
-        return collector
+def _service(
+    document_store=None,
+    vector_index=None,
+    embedding_client=None,
+    chunking_service=None,
+    collector=None,
+    task_reporter=None,
+    intel_service=None,
+    competitor_service=None,
+):
+    return PipelineService(
+        collector=collector or MagicMock(),
+        document_store=document_store or MagicMock(),
+        vector_index=vector_index or MagicMock(),
+        embedding_client=embedding_client or MagicMock(),
+        chunking_service=chunking_service,
+        task_reporter=task_reporter,
+        intel_service=intel_service,
+        competitor_service=competitor_service,
+    )
 
-    @pytest.fixture
-    def mock_vector_store(self):
-        vs = MagicMock()
-        vs.add_chunks.return_value = 1
-        return vs
 
-    @pytest.fixture
-    def mock_chunking_service(self):
-        from models.chunk import Chunk, ParentChunk
-        cs = MagicMock()
-        child = Chunk(chunk_id="c1", article_id=1, parent_chunk_id="p1", content="child chunk", token_count=10, doc_name="test doc")
-        parent = ParentChunk(parent_chunk_id="p1", article_id=1, content="parent chunk", token_count=10, doc_name="test doc")
-        cs.chunk_articles.return_value = ([child], [parent])
-        return cs
+class FakeTaskRunStore:
+    def __init__(self):
+        self.stages = []
+        self.events = []
 
-    def test_pipeline_full_run(
-        self, store, mock_collector, mock_vector_store, mock_embedding_client, mock_chunking_service
-    ):
-        """完整 Pipeline 应成功执行"""
-        service = PipelineService(
-            collector=mock_collector, 
-            article_store=store, 
-            vector_store=mock_vector_store, 
-            embedding_client=mock_embedding_client,
-            chunking_service=mock_chunking_service
+    def create_run(self, task_type, input, idempotency_key=None):
+        return TaskRun(id="run-1", task_type=task_type, input=input)
+
+    def start_run(self, run_id):
+        return TaskRun(id=run_id, task_type="pipeline", status="running")
+
+    def finish_run(self, run_id, status, result=None, error=None):
+        return TaskRun(id=run_id, task_type="pipeline", status=status)
+
+    def create_stage(self, run_id, name):
+        stage = TaskStage(id=f"stage-{len(self.stages) + 1}", task_run_id=run_id, name=name)
+        self.stages.append(stage)
+        return stage
+
+    def finish_stage(self, stage_id, status, result=None, error=None):
+        stage = next(item for item in self.stages if item.id == stage_id)
+        stage.status = status
+        stage.result = result or {}
+        stage.error = error or {}
+        return stage
+
+    def append_event(self, run_id, event_type, payload=None, stage_id=None):
+        event = TaskEvent(
+            id=f"event-{len(self.events) + 1}",
+            task_run_id=run_id,
+            event_type=event_type,
+            payload=payload or {},
+            stage_id=stage_id,
         )
-        result = service.run()
+        self.events.append(event)
+        return event
 
-        assert result["fetched"] == 1
-        assert result["new"] == 1
-        assert result["embedded"] == 1
-        assert result["errors"] == []
+    def get_run(self, run_id):
+        return TaskRun(id=run_id, task_type="pipeline")
 
-    def test_pipeline_collector_failure(
-        self, store, mock_vector_store, mock_embedding_client
-    ):
-        """抓取失败不应终止后续步骤"""
-        collector = MagicMock()
-        collector.fetch_all.side_effect = Exception("Network error")
+    def list_stages(self, run_id):
+        return [stage for stage in self.stages if stage.task_run_id == run_id]
 
-        service = PipelineService(
-            collector, store, mock_vector_store, mock_embedding_client
-        )
-        result = service.run()
+    def list_events(self, run_id, limit=200):
+        return [event for event in self.events if event.task_run_id == run_id][:limit]
 
-        assert result["fetched"] == 0
-        assert len(result["errors"]) == 1
-        assert "抓取" in result["errors"][0]
 
-    def test_pipeline_embedding_failure(
-        self, store, mock_collector, mock_vector_store, mock_chunking_service
-    ):
-        """向量化失败应记录错误"""
-        bad_embedding = MagicMock()
-        bad_embedding.embed.side_effect = Exception("Embedding API error")
+def _chunking_service():
+    cs = MagicMock()
+    child = ChildChunkPoint(
+        point_id="doc:c:0",
+        document_id="doc",
+        parent_chunk_id="doc:p0",
+        content="child chunk",
+        token_count=10,
+        chunk_index=0,
+        doc_name="test doc",
+    )
+    parent = ParentDocumentChunk(
+        parent_chunk_id="doc:p0",
+        document_id="doc",
+        content="parent chunk",
+        token_count=10,
+        child_point_ids=["doc:c:0"],
+        doc_name="test doc",
+    )
+    cs.chunk_documents.return_value = ([child], [parent])
+    return cs
 
-        service = PipelineService(
-            collector=mock_collector, 
-            article_store=store, 
-            vector_store=mock_vector_store, 
-            embedding_client=bad_embedding,
-            chunking_service=mock_chunking_service
-        )
-        result = service.run()
 
-        assert result["fetched"] == 1
-        assert result["new"] == 1
-        assert result["embedded"] == 0
-        assert len(result["errors"]) == 1
+def test_pipeline_full_run(mock_embedding_client):
+    document_store = MagicMock()
+    document_store.save_parent_chunks.return_value = 1
+    vector_index = MagicMock()
+    vector_index.upsert_child_chunks.return_value = 1
+    collector = MagicMock()
+    collector.fetch_all.return_value = [_article(None)]
+    intel_service = MagicMock()
+    intel_service.extract_facts_from_document.return_value = {
+        "created": 1,
+        "updated": 0,
+        "skipped": 0,
+    }
+    competitor_service = MagicMock()
+    competitor_service.auto_link_facts.return_value = {"linked": 1, "facts_processed": 1}
 
-    def test_pipeline_no_new_articles(
-        self, store, mock_vector_store, mock_embedding_client
-    ):
-        """无新文章时应正常完成"""
-        collector = MagicMock()
-        collector.fetch_all.return_value = []
+    service = _service(
+        document_store=document_store,
+        vector_index=vector_index,
+        embedding_client=mock_embedding_client,
+        chunking_service=_chunking_service(),
+        collector=collector,
+        intel_service=intel_service,
+        competitor_service=competitor_service,
+    )
+    result = service.run()
 
-        service = PipelineService(
-            collector, store, mock_vector_store, mock_embedding_client
-        )
-        result = service.run()
+    assert result["fetched"] == 1
+    assert result["new"] == 1
+    assert result["embedded"] == 1
+    assert result["facts_created"] == 1
+    assert result["intel_linked"] == 1
+    assert result["errors"] == []
+    document_store.save_document.assert_called()
+    document_store.save_parent_chunks.assert_called()
+    vector_index.upsert_child_chunks.assert_called()
+    document_store.mark_points_vectorized.assert_called()
+    document_store.update_parse_status.assert_called()
 
-        assert result["fetched"] == 0
-        assert result["new"] == 0
-        assert result["errors"] == []
 
-    def test_pipeline_filters_non_article_pages_before_storage(
-        self, mock_vector_store, mock_embedding_client
-    ):
-        """转换器标记的首页/列表页不应保存入库。"""
-        store = MagicMock()
-        store.get_pending_summary.return_value = []
-        store.get_unembedded.return_value = []
-        collector = MagicMock()
-        collector.fetch_all.return_value = [
-            Article(
-                title="BBC News",
-                url="https://www.bbc.com/news",
-                content="\n\n".join(
-                    [
-                        "## Top Stories",
-                        "[Story 1](/news/1)",
-                        "[Story 2](/news/2)",
-                        "## More News",
-                        "[Story 3](/news/3)",
-                        "[Story 4](/news/4)",
-                        "## Most Watched",
-                        "[Video 1](/video/1)",
-                        "[Video 2](/video/2)",
-                        "## Also in News",
-                        "[Story 5](/news/5)",
-                        "## Recommended",
-                        "[Story 6](/news/6)",
-                    ]
-                ),
-                source="bbc",
-                language=Language.EN,
-                published_at=datetime.now(),
-            )
-        ]
-        service = PipelineService(
-            collector, store, mock_vector_store, mock_embedding_client
-        )
+def test_embed_with_chunks_writes_parent_before_embedding_and_qdrant(mock_embedding_client):
+    calls = []
+    document_store = MagicMock()
+    document_store.save_document.side_effect = lambda doc: calls.append("document") or doc
+    document_store.save_parent_chunks.side_effect = lambda parents: calls.append("parents") or len(parents)
+    document_store.mark_points_vectorized.side_effect = lambda points: calls.append("status")
+    mock_embedding_client.embed = MagicMock(
+        side_effect=lambda texts: calls.append("embeddings") or [[0.1] * 1536 for _ in texts]
+    )
+    vector_index = MagicMock()
+    vector_index.upsert_child_chunks.side_effect = (
+        lambda chunks, embeddings: calls.append("qdrant") or len(chunks)
+    )
 
-        result = service.run()
+    service = _service(
+        document_store=document_store,
+        vector_index=vector_index,
+        embedding_client=mock_embedding_client,
+        chunking_service=_chunking_service(),
+    )
+    document = service._article_to_document(_article())
+    result = {"chunks": 0, "parent_chunks": 0}
+    embedded = service._embed_documents([document], result)
 
-        assert result["skipped_non_articles"] == 1
-        store.save_articles.assert_not_called()
+    assert embedded == 1
+    assert calls == ["parents", "embeddings", "qdrant", "status"]
 
-    def test_embed_with_chunks_writes_parents_before_embeddings_and_children(
-        self, store, mock_vector_store, mock_embedding_client, mock_chunking_service
-    ):
-        """父 chunks 应先于 embedding 和 child chunks 写入。"""
-        calls = []
-        store.save_parent_chunks.side_effect = lambda parents: calls.append("parents") or len(parents)
-        mock_embedding_client.embed = MagicMock(
-            side_effect=lambda texts: calls.append("embeddings") or [[0.1] * 1536 for _ in texts]
-        )
-        mock_vector_store.add_chunks.side_effect = (
-            lambda chunks, embeddings: calls.append("children") or len(chunks)
-        )
 
-        service = PipelineService(
-            collector=MagicMock(),
-            article_store=store,
-            vector_store=mock_vector_store,
-            embedding_client=mock_embedding_client,
-            chunking_service=mock_chunking_service,
-        )
+def test_pipeline_does_not_mark_embedded_when_qdrant_write_incomplete(mock_embedding_client):
+    document_store = MagicMock()
+    document_store.save_parent_chunks.return_value = 1
+    vector_index = MagicMock()
+    vector_index.upsert_child_chunks.return_value = 0
+    collector = MagicMock()
+    collector.fetch_all.return_value = [_article(None)]
 
-        result = {"chunks": 0, "parent_chunks": 0}
-        embedded = service._embed_with_chunks(store.get_unembedded.return_value, result)
+    service = _service(
+        document_store=document_store,
+        vector_index=vector_index,
+        embedding_client=mock_embedding_client,
+        chunking_service=_chunking_service(),
+        collector=collector,
+    )
+    result = service.run()
 
-        assert embedded == 1
-        assert calls == ["parents", "embeddings", "children"]
+    assert result["embedded"] == 0
+    assert len(result["errors"]) == 1
 
-    def test_pipeline_does_not_mark_embedded_when_child_write_incomplete(
-        self, store, mock_collector, mock_embedding_client, mock_chunking_service
-    ):
-        """子 chunk 未完整写入时，不应把文章标记为 embedded。"""
-        vector_store = MagicMock()
-        vector_store.add_chunks.return_value = 0
 
-        service = PipelineService(
-            collector=mock_collector,
-            article_store=store,
-            vector_store=vector_store,
-            embedding_client=mock_embedding_client,
-            chunking_service=mock_chunking_service,
-        )
+def test_pipeline_records_task_stages_and_events(mock_embedding_client):
+    document_store = MagicMock()
+    document_store.save_parent_chunks.return_value = 1
+    vector_index = MagicMock()
+    vector_index.upsert_child_chunks.return_value = 1
+    collector = MagicMock()
+    collector.fetch_all.return_value = [_article(None)]
+    task_store = FakeTaskRunStore()
 
-        result = service.run()
+    service = _service(
+        document_store=document_store,
+        vector_index=vector_index,
+        embedding_client=mock_embedding_client,
+        chunking_service=_chunking_service(),
+        collector=collector,
+        task_reporter=TaskRunReporter(task_store, run_id="run-1"),
+    )
 
-        assert result["embedded"] == 0
-        assert len(result["errors"]) == 1
-        store.mark_embedded.assert_not_called()
+    result = service.run()
+
+    assert result["embedded"] == 1
+    stage_names = {stage.name for stage in task_store.stages}
+    assert {
+        "collect",
+        "markdown",
+        "store_source_documents",
+        "chunk_and_vectorize",
+        "extract_intel_facts",
+        "link_facts",
+    }.issubset(stage_names)
+    assert "summary" not in stage_names
+    assert any(event.event_type == "qdrant_upsert" for event in task_store.events)

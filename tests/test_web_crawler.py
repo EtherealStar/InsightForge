@@ -180,6 +180,14 @@ def test_canonicalize_url_removes_tracking_query_and_fragment():
     assert url == "https://www.thepaper.cn/newsDetail_forward_33198341"
 
 
+def test_meets_content_threshold_requires_sufficient_chinese_body():
+    crawler = WebCrawler()
+
+    assert not crawler._meets_content_threshold("中" * 999)
+    assert not crawler._meets_content_threshold("a" * 4000)
+    assert crawler._meets_content_threshold("中" * 1000)
+
+
 def test_crawl_all_passes_extended_site_rules():
     crawler = WebCrawler(max_pages=20)
     site = {

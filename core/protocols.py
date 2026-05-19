@@ -1,125 +1,268 @@
 """接口契约：Demo 和 Full 都实现这些 Protocol"""
-from typing import Any, Protocol, Iterator, runtime_checkable
+from typing import Any, BinaryIO, Protocol, Iterator, runtime_checkable
 
-from models.article import Article
 from models.agent_session import AgentSession, ResearchTodo, SessionStatus
-from models.chunk import Chunk, ParentChunk
+from models.auth import ApiKeyRecord
+from models.config_audit import ConfigAuditLog
+from models.competitor import Competitor, CompetitorProduct
+from models.document import (
+    ChildChunkPoint,
+    ChildChunkSearchResult,
+    ParentDocumentChunk,
+    SourceDocument,
+)
+from models.evidence import EvidenceRef
+from models.file_asset import (
+    DocumentBlob,
+    ExtractedFile,
+    FileTypeDetection,
+    ParsedDocument,
+    StoredBlobResult,
+    UploadBatch,
+)
+from models.insight import InsightClaim
+from models.intel import IntelFact
 from models.memory import CoreMemoryRevision, MemoryIndexItem, MemoryStatus, MemoryType, PersistentMemory
-from models.search import SearchResult, ChunkSearchResult
+from models.report import AnalysisReport, ReportClaimRef, ReportEvidenceRef, ReportQualityReview
+from models.task_run import TaskEvent, TaskRun, TaskStage
 
 
 @runtime_checkable
-class ArticleStoreProtocol(Protocol):
-    """文章元数据存储（PostgreSQL）"""
+class DocumentStoreProtocol(Protocol):
+    """PostgreSQL authoritative document and parent chunk store."""
 
-    def save_articles(self, articles: list[Article]) -> int: ...
+    def save_document(self, document: SourceDocument) -> SourceDocument: ...
 
-    def get_unembedded(self, limit: int = 100) -> list[Article]: ...
+    def get_document(self, document_id: str) -> SourceDocument | None: ...
 
-    def mark_embedded(self, article_ids: list[int]) -> None: ...
+    def list_documents(
+        self,
+        filters: dict[str, Any] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[SourceDocument]: ...
 
-    def search_by_keyword(
-        self, keyword: str, limit: int = 20
-    ) -> list[Article]: ...
-
-    def get_recent(self, hours: int = 24, limit: int = 50) -> list[Article]: ...
-
-    def get_stats(self) -> dict: ...
-
-    def cleanup_old_articles(self, retention_days: int = 90) -> int: ...
-
-    # 扩展方法：已被当前 Router/Service/Tool 稳定依赖
-    def delete_articles(self, article_ids: list[int]) -> int: ...
-
-    def get_pending_summary(self, limit: int = 100) -> list[Article]: ...
-
-    def mark_pending_summary(self, article_ids: list[int]) -> None: ...
-
-    def mark_summarized(self, article_ids: list[int]) -> None: ...
-
-    def update_summary(
-        self, article_id: int, summary: str, tags: list[str]
+    def update_parse_status(
+        self, document_id: str, status: str, error: dict[str, Any] | None = None
     ) -> None: ...
 
-    def get_article_by_id(self, article_id: int) -> Article | None: ...
-
-    def get_articles(
-        self,
-        page: int = 1,
-        page_size: int = 20,
-        source: str | None = None,
-        language: str | None = None,
-        keyword: str | None = None,
-    ) -> list[Article]: ...
-
-    def count_articles(
-        self,
-        source: str | None = None,
-        language: str | None = None,
-        keyword: str | None = None,
+    def save_parent_chunks(
+        self, parent_chunks: list[ParentDocumentChunk]
     ) -> int: ...
-
-    # --- 父 chunk 存储方法 ---
-
-    def save_parent_chunks(self, parent_chunks: list[ParentChunk]) -> int:
-        """批量保存父 chunks 到数据库 (upsert)。返回写入数量。"""
-        ...
 
     def get_parent_chunks_by_ids(
         self, parent_chunk_ids: list[str]
-    ) -> list[ParentChunk]:
-        """根据 parent_chunk_id 列表批量获取父 chunks。"""
-        ...
+    ) -> list[ParentDocumentChunk]: ...
 
-    def delete_parent_chunks_by_article_ids(
-        self, article_ids: list[int]
-    ) -> int:
-        """删除指定文章 ID 关联的所有父 chunks。返回删除数量。"""
-        ...
-
-    # --- 全文搜索方法 ---
+    def list_parent_chunks(self, document_id: str) -> list[ParentDocumentChunk]: ...
 
     def search_parent_chunks_by_keyword(
-        self, query: str, top_k: int = 20
-    ) -> list[tuple]:
-        """在父 chunks 上执行全文搜索。
+        self,
+        query: str,
+        top_k: int = 20,
+        filters: dict[str, Any] | None = None,
+    ) -> list[tuple[ParentDocumentChunk, float]]: ...
 
-        Args:
-            query: 已分词的查询文本（空格分隔）。
-            top_k: 返回结果数量。
+    def mark_points_vectorized(
+        self, points: list[ChildChunkPoint]
+    ) -> None: ...
 
-        Returns:
-            [(ParentChunk, ts_rank_score), ...] 按分数降序。
-        """
-        ...
+    def mark_points_vector_failed(
+        self, point_ids: list[str], error: dict[str, Any] | str
+    ) -> None: ...
 
-    def backfill_search_vectors(self) -> int:
-        """为缺失 search_vector 的已有父 chunks 回填全文索引。返回更新数量。"""
-        ...
+    def delete_document(self, document_id: str) -> None: ...
 
 
 @runtime_checkable
-class VectorStoreProtocol(Protocol):
-    """向量存储（pgvector）— chunk 级别存储与检索"""
+class VectorIndexProtocol(Protocol):
+    """Qdrant-only vector index for child chunk points."""
 
-    def add_chunks(
-        self, chunks: list[Chunk], embeddings: list[list[float]]
-    ) -> int:
-        """将子 chunks 及其向量写入向量数据库。返回写入数量。"""
-        ...
+    def healthcheck(self) -> bool: ...
 
-    def search_chunks(
+    def ensure_collection(self) -> None: ...
+
+    def recreate_collection(self) -> None: ...
+
+    def upsert_child_chunks(
+        self, chunks: list[ChildChunkPoint], embeddings: list[list[float]]
+    ) -> int: ...
+
+    def search_child_chunks(
         self,
         query_embedding: list[float],
         top_k: int = 10,
-        filters: dict | None = None,
-    ) -> list[ChunkSearchResult]:
-        """搜索子 chunks，返回匹配结果列表（parent_chunk 字段为 None）。"""
-        ...
+        filters: dict[str, Any] | None = None,
+    ) -> list[ChildChunkSearchResult]: ...
 
-    def delete_by_article_ids(self, article_ids: list[int]) -> None:
-        """删除指定文章 ID 关联的所有 chunk 向量。"""
-        ...
+    def delete_by_document_ids(self, document_ids: list[str]) -> None: ...
+
+    def delete_by_point_ids(self, point_ids: list[str]) -> None: ...
+
+
+@runtime_checkable
+class UploadStoreProtocol(Protocol):
+    """PostgreSQL authoritative upload batch and blob metadata store."""
+
+    def create_batch(self, batch: UploadBatch) -> UploadBatch: ...
+
+    def finish_batch(
+        self, batch_id: str, status: str, error: dict[str, Any] | None = None
+    ) -> UploadBatch: ...
+
+    def save_blob(self, blob: DocumentBlob) -> DocumentBlob: ...
+
+    def get_blob(self, blob_id: str) -> DocumentBlob | None: ...
+
+    def list_blobs(self, batch_id: str) -> list[DocumentBlob]: ...
+
+    def find_blobs_by_sha256(self, sha256: str) -> list[DocumentBlob]: ...
+
+    def update_blob_status(
+        self, blob_id: str, status: str, error: dict[str, Any] | None = None
+    ) -> None: ...
+
+
+@runtime_checkable
+class FileBlobStoreProtocol(Protocol):
+    """File object store abstraction for uploaded and extracted bytes."""
+
+    def put(
+        self, stream: BinaryIO, metadata: dict[str, Any] | None = None
+    ) -> StoredBlobResult: ...
+
+    def open(self, blob_path: str) -> BinaryIO: ...
+
+    def delete(self, blob_path: str) -> bool: ...
+
+    def exists(self, blob_path: str) -> bool: ...
+
+    def quarantine(self, blob_path: str, reason: str) -> str: ...
+
+
+@runtime_checkable
+class ArchiveExtractorProtocol(Protocol):
+    """Safe archive extraction interface."""
+
+    def can_extract(self, filename: str, content_type: str = "") -> bool: ...
+
+    def extract(
+        self,
+        archive_path: str,
+        output_dir: str,
+        limits: dict[str, Any] | None = None,
+    ) -> list[ExtractedFile]: ...
+
+
+@runtime_checkable
+class FileTypeDetectorProtocol(Protocol):
+    """Conservative file type detector."""
+
+    def detect(self, filename: str, content_type: str = "") -> FileTypeDetection: ...
+
+
+@runtime_checkable
+class DocumentParserProtocol(Protocol):
+    """Parse stored blobs into normalized Markdown/text documents."""
+
+    def detect(self, blob: DocumentBlob) -> FileTypeDetection: ...
+
+    def parse(self, blob: DocumentBlob) -> ParsedDocument: ...
+
+
+@runtime_checkable
+class TaskRunStoreProtocol(Protocol):
+    """PostgreSQL authoritative task run history store."""
+
+    def create_run(
+        self,
+        task_type: str,
+        input: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> TaskRun: ...
+
+    def start_run(self, run_id: str) -> TaskRun: ...
+
+    def finish_run(
+        self,
+        run_id: str,
+        status: str,
+        result: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> TaskRun: ...
+
+    def create_stage(self, run_id: str, name: str) -> TaskStage: ...
+
+    def finish_stage(
+        self,
+        stage_id: str,
+        status: str,
+        result: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> TaskStage: ...
+
+    def append_event(
+        self,
+        run_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        stage_id: str | None = None,
+    ) -> TaskEvent: ...
+
+    def get_run(self, run_id: str) -> TaskRun | None: ...
+
+    def list_runs(
+        self,
+        filters: dict[str, Any] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[TaskRun], int]: ...
+
+    def list_stages(self, run_id: str) -> list[TaskStage]: ...
+
+    def list_events(self, run_id: str, limit: int = 200) -> list[TaskEvent]: ...
+
+
+@runtime_checkable
+class RedisStateStoreProtocol(Protocol):
+    """Redis execution-time state, lock, cache, and event stream store."""
+
+    def healthcheck(self) -> bool: ...
+
+    def acquire_lock(self, key: str, owner: str, ttl_seconds: int) -> bool: ...
+
+    def release_lock(self, key: str, owner: str) -> bool: ...
+
+    def set_json(
+        self,
+        key: str,
+        value: dict[str, Any] | list[Any] | str | int | float | bool | None,
+        ttl_seconds: int | None = None,
+    ) -> bool: ...
+
+    def get_json(
+        self, key: str
+    ) -> dict[str, Any] | list[Any] | str | int | float | bool | None: ...
+
+    def delete(self, key: str) -> bool: ...
+
+    def set_task_status(
+        self,
+        run_id: str,
+        status: str,
+        payload: dict[str, Any] | None = None,
+        ttl_seconds: int | None = None,
+    ) -> bool: ...
+
+    def get_task_status(self, run_id: str) -> dict[str, Any] | None: ...
+
+    def append_task_event(self, run_id: str, event: dict[str, Any]) -> bool: ...
+
+    def set_idempotency_key(
+        self, key: str, value: str, ttl_seconds: int
+    ) -> bool: ...
+
+    def get_idempotency_key(self, key: str) -> str | None: ...
 
 
 @runtime_checkable
@@ -150,6 +293,34 @@ class LLMClientProtocol(Protocol):
     ) -> Iterator[str]:
         """多轮对话流式版本。"""
         ...
+
+
+@runtime_checkable
+class StructuredExtractionClientProtocol(Protocol):
+    """Structured JSON extraction client for fact extraction workloads."""
+
+    def extract_json(
+        self,
+        system_prompt: str,
+        user_message: str,
+        *,
+        schema_name: str,
+        temperature: float = 0.0,
+    ) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class JudgeClientProtocol(Protocol):
+    """Structured JSON judge client for report quality reviews."""
+
+    def judge_json(
+        self,
+        system_prompt: str,
+        user_message: str,
+        *,
+        schema_name: str,
+        temperature: float = 0.0,
+    ) -> dict[str, Any]: ...
 
 
 @runtime_checkable
@@ -316,3 +487,215 @@ class WebhookServiceProtocol(Protocol):
     def load_channels(self) -> list: ...
 
     def get_auto_push(self) -> bool: ...
+
+
+@runtime_checkable
+class CompetitorStoreProtocol(Protocol):
+    """竞品数据存储（PostgreSQL）"""
+
+    def save_competitor(self, competitor: Competitor) -> Competitor:
+        """创建或更新竞品档案。返回带 id 的实例。"""
+        ...
+
+    def get_competitor(self, competitor_id: int) -> Competitor | None: ...
+
+    def list_competitors(
+        self, status: str = "active", limit: int = 100
+    ) -> list[Competitor]: ...
+
+    def search_competitors(self, query: str) -> list[Competitor]:
+        """按名称/别名模糊搜索竞品。"""
+        ...
+
+    def delete_competitor(self, competitor_id: int) -> None: ...
+
+    def save_product(self, product: CompetitorProduct) -> CompetitorProduct: ...
+
+    def list_products(self, competitor_id: int) -> list[CompetitorProduct]: ...
+
+    def delete_product(self, product_id: int) -> None: ...
+
+    # --- 情报关联 ---
+
+    def link_intel_to_competitor(
+        self, document_id: str, competitor_id: int
+    ) -> None: ...
+
+    def unlink_intel_from_competitor(
+        self, document_id: str, competitor_id: int
+    ) -> None: ...
+
+    def get_competitor_ids_for_intel(self, document_id: str) -> list[int]: ...
+
+    def get_intel_ids_for_competitor(
+        self,
+        competitor_id: int,
+        intel_type: str | None = None,
+        limit: int = 50,
+    ) -> list[str]: ...
+
+
+@runtime_checkable
+class IntelStoreProtocol(Protocol):
+    """Structured intel fact store."""
+
+    def save_fact(self, fact: IntelFact) -> IntelFact: ...
+
+    def get_fact(self, fact_id: str) -> IntelFact | None: ...
+
+    def list_facts(
+        self,
+        filters: dict[str, Any] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[IntelFact]: ...
+
+    def update_fact_status(self, fact_id: str, status: str) -> IntelFact: ...
+
+    def delete_fact(self, fact_id: str) -> None: ...
+
+    def link_fact_to_competitor(
+        self,
+        fact_id: str,
+        competitor_id: int,
+        relation_type: str = "subject",
+        confidence_score: float = 1.0,
+    ) -> None: ...
+
+    def unlink_fact_from_competitor(
+        self,
+        fact_id: str,
+        competitor_id: int,
+        relation_type: str | None = None,
+    ) -> None: ...
+
+    def link_fact_to_product(
+        self,
+        fact_id: str,
+        product_id: int,
+        relation_type: str = "subject",
+        confidence_score: float = 1.0,
+    ) -> None: ...
+
+    def save_evidence(self, evidence: EvidenceRef) -> EvidenceRef: ...
+
+    def list_evidence(self, owner_type: str, owner_id: str) -> list[EvidenceRef]: ...
+
+
+@runtime_checkable
+class InsightStoreProtocol(Protocol):
+    """Insight claim store."""
+
+    def save_claim(self, claim: InsightClaim) -> InsightClaim: ...
+
+    def get_claim(self, claim_id: str) -> InsightClaim | None: ...
+
+    def list_claims(
+        self,
+        filters: dict[str, Any] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[InsightClaim]: ...
+
+    def update_claim_status(self, claim_id: str, status: str) -> InsightClaim: ...
+
+    def delete_claim(self, claim_id: str) -> None: ...
+
+    def attach_evidence(self, claim_id: str, evidence: EvidenceRef) -> EvidenceRef: ...
+
+
+@runtime_checkable
+class ReportStoreProtocol(Protocol):
+    """分析报告存储（PostgreSQL）"""
+
+    def save_report(self, report: AnalysisReport) -> AnalysisReport:
+        """创建或更新报告。返回带 id 的实例。"""
+        ...
+
+    def get_report(self, report_id: int) -> AnalysisReport | None: ...
+
+    def list_reports(
+        self,
+        report_type: str | None = None,
+        status: str | None = None,
+        limit: int = 30,
+        offset: int = 0,
+    ) -> list[AnalysisReport]: ...
+
+    def delete_report(self, report_id: int) -> None: ...
+
+    def update_report_status(
+        self,
+        report_id: int,
+        status: str,
+        *,
+        review_status: str | None = None,
+        quality_score: float | None = None,
+        quality_summary: str | None = None,
+        actor: str = "system",
+    ) -> AnalysisReport: ...
+
+    def attach_claims(
+        self, report_id: int, claim_refs: list[ReportClaimRef]
+    ) -> None: ...
+
+    def list_report_claims(self, report_id: int) -> list[ReportClaimRef]: ...
+
+    def attach_evidence_refs(
+        self, report_id: int, evidence_refs: list[ReportEvidenceRef]
+    ) -> None: ...
+
+    def list_report_evidence_refs(
+        self, report_id: int
+    ) -> list[ReportEvidenceRef]: ...
+
+    def save_quality_review(
+        self, review: ReportQualityReview
+    ) -> ReportQualityReview: ...
+
+    def list_quality_reviews(
+        self, report_id: int
+    ) -> list[ReportQualityReview]: ...
+
+    def append_audit_log(
+        self,
+        report_id: int | None,
+        session_id: str | None,
+        action: str,
+        detail: dict,
+        source_refs: list[dict] | None = None,
+    ) -> None:
+        """追加审计日志条目。"""
+        ...
+
+    def get_audit_trail(
+        self, report_id: int
+    ) -> list[dict]:
+        """获取报告完整审计链路。"""
+        ...
+
+
+@runtime_checkable
+class AuthStoreProtocol(Protocol):
+    """Application API key persistence."""
+
+    def create_api_key(self, record: ApiKeyRecord) -> ApiKeyRecord: ...
+
+    def get_api_key_by_hash(self, key_hash: str) -> ApiKeyRecord | None: ...
+
+    def update_last_used(self, key_id: str) -> None: ...
+
+
+@runtime_checkable
+class ConfigAuditStoreProtocol(Protocol):
+    """Configuration audit persistence."""
+
+    def append_config_audit(self, log: ConfigAuditLog) -> ConfigAuditLog: ...
+
+    def list_config_audit(
+        self,
+        *,
+        target: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[ConfigAuditLog]: ...

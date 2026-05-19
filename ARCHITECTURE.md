@@ -1,6 +1,6 @@
-# Logos 架构文档
+# InsightForge 架构文档
 
-> **项目阶段**：Demo+ （前后端分离架构 + ReAct Agent + 深度研究 + Web 搜索 + AI 摘要 + Rerank + 混合检索 RAG + Webhook 推送）
+> **项目阶段**：Demo+（前后端分离架构 + ReAct Agent + 竞品分析 + 深度研究 + Web 搜索 + AI 摘要 + Rerank + PostgreSQL/Qdrant 混合检索 RAG + 结构化事实层 + 报告质量门禁 + 应用级认证授权 + Webhook 推送）
 
 ---
 
@@ -8,32 +8,35 @@
 
 | 时间 | 变更 | 摘要 |
 |---|---|---|
-| 2026-05 | Pipeline 抓取与任务反馈修复 | 前端异步任务轮询、RSS 并发抓取、Celery 自动重试 |
+| 2026-05 | **Phase 3 报告治理与生产安全验收完成** | 报告生成统一走 `ReportService` + `ReportQualityService`，新增质量审查、审批发布、应用 API Key 角色授权、配置审计和生产 Compose 安全基线，并完成整体测试与运行文档同步 |
+| 2026-05 | **Phase 2 Facts/Claims API 收口** | 新增 `/api/intel/facts`、`/api/insights/claims`，竞品详情补充 facts/timeline 口径；API 只调用 service 层，不恢复旧摘要链路 |
+| 2026-05 | **Phase 2 服务层与事实抽取 Pipeline** | 新增 Intel/Insight/Report service、ServiceRegistry，并将 full pipeline 改为分块向量化后抽取 `IntelFact` / `EvidenceRef`、执行 fact 级竞品关联 |
+| 2026-05 | **Agent 工具注册表重构** | 内置工具改为 `ToolSpec` 定义注册表和 `BuiltinToolFactory` 创建；`search_evidence` 替代旧知识库工具并支持 evidence 过滤下推，fact/claim 工具只通过 service 白名单访问业务层 |
+| 2026-05 | **Scheduler 任务审计接入** | Pipeline 和上传批次摄入写入 `task_runs/task_stages/task_events`，Redis 锁保护 Pipeline、上传批次和文档向量化，`/api/tasks/{task_id}` 返回 PostgreSQL 历史与 Celery 状态 |
+| 2026-05 | **上传文档摄入底座** | 新增 UploadStore、LocalFileBlobStore、ArchiveExtractor、DocumentParser 和 DocumentIngestionService，支持上传文件进入 SourceDocument/RAG 链路 |
+| 2026-05 | **Phase 1 基础设施全量重构** | PostgreSQL 保存权威文档、父块、全文索引和 Qdrant point 状态；Qdrant 保存子块向量、正文 payload 和检索 metadata |
+| 2026-05 | **InsightForge 竞品分析改造** | Logos -> InsightForge，新增竞品/报告域模型、Store、Agent 工具、API、前端 |
 | 2026-05 | RAGAs 评估框架 | 三维度评估（检索质量 + 端到端问答 + Agent 工具调用），LLM-as-Judge |
-| 2026-05 | pgvector 统一存储 | 移除 Qdrant，子 chunk 向量并入 PostgreSQL |
-| 2026-05 | 混合检索 + RRF | 向量+关键词双通道 + jieba 中文分词 + Reciprocal Rank Fusion |
-| 2026-05 | 父子分块 RAG | Markdown 感知分块，子 chunk→pgvector 检索，父 chunk→PostgreSQL 召回 |
-| 2026-05 | 基础设施迁移 | SQLite→PostgreSQL, APScheduler→Celery+Redis, Docker Compose |
-| 2026-05 | VPS 一键部署 | 新增应用镜像、生产 Compose、Caddy Basic Auth 与初始化迁移 |
+| 2026-05 | 混合检索 + RRF | Qdrant 语义检索 + PostgreSQL 父块全文搜索 + Reciprocal Rank Fusion |
+| 2026-05 | 父子分块 RAG | Markdown-aware 子块检索，父块召回完整上下文，父块之间通过共享尾部子块 overlap |
+| 2026-05 | 基础设施迁移 | SQLite -> PostgreSQL，APScheduler -> Celery+Redis，Docker Compose |
 
-→ 完整变更历史：[docs/design-docs/changelog.md](docs/design-docs/changelog.md)
+完整变更历史见 [docs/design-docs/changelog.md](docs/design-docs/changelog.md)。
 
 ---
 
 ## 1. 系统概览
 
-Logos 是一个**个人 AI 新闻分析助手**，具备以下核心能力：
+InsightForge 是一个 AI 驱动的竞品分析助手，聚焦 AI 编程工具赛道，核心能力包括：
 
-1. **定时 Pipeline**：自动从多个数据源（RSS + 网页爬取）抓取内容 → Markdown 转换 + 元数据提取 → 去重存储 → AI 摘要打标签 → 父子分块 + 向量化 + jieba 分词全文索引 → 每日自动生成新闻简报
-2. **ReAct Agent 问答**：用户通过自然语言提问，ReAct Agent 自主推理并决策调用工具（语义检索、统计查询、全文阅读、Web 搜索、简报生成等），基于工具返回的真实数据生成回答
-3. **深度研究**：Plan-Execute 深度研究模式，先生成研究计划供用户审阅，确认后 ReAct Agent 按计划执行多步研究任务，自动保存研究报告
-4. **Web 搜索**：多搜索引擎并发搜索（DuckDuckGo + Tavily），程序化去重聚合
-5. **NewsAPI 在线搜索**：代理 NewsAPI 接口，支持全球新闻搜索和热门头条
-6. **Webhook 推送**：将新闻简报/研究报告通过 Webhook 推送到飞书、钉钉、企业微信、Telegram、ntfy 等平台
-7. **Agent 工具系统**：完整的工具定义、注册、编排、执行基础设施 + 6 个内置工具 + ReAct 推理-行动循环核心
-8. **RAGAs 评估**：基于 RAGAs 框架的三维度自动化评估（检索质量、端到端问答质量、Agent 工具调用准确性），支持自定义 OpenAI 兼容评判 LLM
-
-当前系统为**前后端分离架构**（Vue 3 + FastAPI）。
+1. 情报采集 Pipeline：RSS/网页爬取 -> Markdown 转换 -> SourceDocument 入库 -> 父子分块 -> 子块向量化 -> 结构化事实抽取 -> fact 级竞品关联。
+2. 竞品管理：竞品档案 CRUD、产品线管理、fact 聚合归因、多竞品横向对比。
+3. ReAct Agent 分析：自然语言问答，Agent 自主推理并调用情报检索、竞品查询、报告生成和 Web 搜索工具。
+4. 分析报告：生成结构化竞品分析报告，绑定 claim/evidence 关系，经过质量门禁后进入待审或修订状态。
+5. 深度研究：Plan-Execute 多步研究任务，自动保存报告。
+6. Web 搜索与 Webhook：多引擎搜索聚合，支持飞书/钉钉/企微/Telegram/ntfy 推送。
+7. 安全与审计：应用级 API Key 认证、viewer/analyst/admin 授权、配置变更审计和生产健康检查。
+8. RAGAs 评估：检索质量、端到端问答、Agent 工具调用三类自动化评估。
 
 ---
 
@@ -41,505 +44,455 @@ Logos 是一个**个人 AI 新闻分析助手**，具备以下核心能力：
 
 | 模块 | 选型 | 一句话理由 |
 |---|---|---|
-| 后端语言 | Python 3.11+ | 后端全栈，AI 生态完善 |
+| 后端语言 | Python 3.11+ | AI 生态完善，后端实现直接 |
 | 前端 | Vue 3 + Vite 6 | 轻量 SPA，开发效率高 |
-| Web 框架 | FastAPI + Uvicorn | 异步 REST + SSE 流式支持 |
-| 元数据存储 | PostgreSQL 16 | 并发写入 + JSONB + tsvector 全文搜索 |
-| 向量数据库 | PostgreSQL + pgvector | 单库持久化 + cosine 检索 |
-| 任务调度 | Celery + Redis | 分布式异步执行 + Flower 监控 |
-| LLM | openai/gemini/anthropic SDK | 4 种后端统一 Protocol |
-| 检索 | HybridSearchService + RRF | 向量+关键词双通道融合 |
-| 分块 | tiktoken + ChunkingService | Markdown 感知的父子分块 |
-| 评估 | RAGAs + LLM-as-Judge | 三维度 RAG 质量自动化评估 |
+| Web 框架 | FastAPI + Uvicorn | REST + SSE 流式支持 |
+| 权威存储 | PostgreSQL 16 | JSONB、事务、全文索引、任务历史 |
+| 向量索引 | Qdrant | 专职向量检索、payload 过滤、collection 重建 |
+| 任务调度 | Celery + Redis | 分布式异步执行 + Beat 定时触发 |
+| LLM / 结构化抽取 | openai / google-genai / anthropic SDK | 主 LLM 和结构化抽取分离配置，均通过 Protocol |
+| 报告质量 Judge | openai / google-genai / anthropic SDK | 独立于主 LLM 和结构化抽取的 JSON Judge |
+| 检索 | HybridSearchService + RRF | Qdrant 子块语义检索 + PostgreSQL 父块关键词检索 |
+| 分块 | tiktoken + ChunkingService | Markdown-aware 父子分块，metadata 全链路保留 |
+| 评估 | RAGAs + LLM-as-Judge | 自动化质量评估 |
 | 日志 | structlog | 结构化 JSON + request_id 追踪 |
 
-→ 完整选型论证与 ADR：[docs/design-docs/tech-decisions.md](docs/design-docs/tech-decisions.md)
+完整选型论证见 [docs/design-docs/tech-decisions.md](docs/design-docs/tech-decisions.md)。
 
 ---
 
 ## 3. 分层架构
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                        前端表现层 (Frontend)                        │
-│   Vue 3 SPA: NewsView │ BriefView │ NewsApiView │ QueryView       │
-│              WebhookView │ SettingsView │ ConfigView               │
-│   通过 Axios 调用 /api/* 端点                                      │
-├────────────────────────────────────────────────────────────────────┤
-│                     后端表现层 (Delivery)                           │
-│   FastAPI Server (server.py) — 9 个路由模块 + CLI 调试工具         │
-├────────────────────────────────────────────────────────────────────┤
-│                  Agent 智能体层 (Agent/React + Tools)                │
-│   ReActAgent (推理-行动循环)  │  ToolRegistry (注册中心)           │
-│   6 个内置工具               │  ToolChain / AsyncToolExecutor     │
-│   三层记忆系统：核心记忆 + 持久记忆 + 会话记忆                      │
-├────────────────────────────────────────────────────────────────────┤
-│                     应用服务层 (Services)                           │
-│   PipelineService │ QueryService │ BriefService │ WebhookService   │
-│   SummaryService  │ WebSearchService │ DeepResearchService         │
-├────────────────────────────────────────────────────────────────────┤
-│                     领域模型层 (Models)                             │
-│   ArticleEntity/DTO │ DailyBrief │ Chunk │ ParentChunk │ SearchResult │
-├────────────────────────────────────────────────────────────────────┤
-│                    基础设施层 (Infrastructure)                      │
-│   PostgresArticleStore │ PgVectorStore │ ChunkingService        │
-│   HybridSearchService  │ 4×LLMClient │ EmbeddingClient            │
-│   NewsCollector │ WebCrawler │ WebSearchClients │ RerankClient     │
-├────────────────────────────────────────────────────────────────────┤
-│                    横切关注点 (Core)                                │
-│   AppConfig │ Protocols │ Factory │ ConfigManager                    │
-│   Exceptions │ Logging │ Retry                                     │
-├────────────────────────────────────────────────────────────────────┤
-│                     调度层 (Scheduler)                              │
-│   Celery + Redis — Beat 定时触发 │ Worker 异步执行                 │
-└────────────────────────────────────────────────────────────────────┘
+```text
+Frontend (Vue 3)
+  -> Delivery (FastAPI API / CLI)
+  -> Agent + Tools (ReActAgent, ToolRegistry, built-in tools)
+  -> Services (Pipeline, Query, Intel, Insight, Competitor, Report, ReportQuality, Webhook)
+  -> Infrastructure
+       - PostgresArticleStore：新闻列表与旧 UI/API 文章入口
+       - PostgresUploadStore：upload_batches、document_blobs 上传元数据
+       - LocalFileBlobStore / ArchiveExtractor / DocumentParser：文件保存、安全解包和标准化解析
+       - PostgresDocumentStore：source_documents、document_parent_chunks、document_vector_points
+       - QdrantVectorIndex：子块向量与 payload 检索
+       - ChunkingService：SourceDocument -> ParentDocumentChunk + ChildChunkPoint
+       - HybridSearchService：Qdrant semantic + PostgreSQL keyword + RRF
+       - PostgresIntelStore / PostgresInsightStore：结构化事实、证据和 claim
+       - PostgresReportStore：报告、report-claim/report-evidence 关系、质量审查和审计
+       - PostgresAuthStore / PostgresConfigAuditStore：API Key 哈希和配置审计
+       - LLM / Structured Extraction / Judge / Embedding / Rerank / Web Search clients
+  -> Core (Config, Protocols, Factory, Exceptions, Retry, Logging)
+  -> Scheduler (Celery + Redis)
 ```
 
-**层间依赖规则**（严格单向）：
-- Frontend → Delivery（HTTP API）
-- Delivery → Agent/Tools → Services → Infrastructure
-- Agent/Tools 通过 BaseTool 子类调用 Services 层
-- Infrastructure 实现 Core/Protocols 定义的接口
-- Models 是纯数据层，被所有层引用
-- Core 被所有层引用
+层间依赖保持单向：Delivery -> Agent/Tools -> Services -> Infrastructure；Infrastructure 只实现 `core/protocols.py` 中的接口；`models/` 为纯 dataclass。Delivery 层的结构化事实和 claim API 只调用 `IntelService`、`InsightService`、`CompetitorService`，不直接访问 Store、Qdrant、LLM、Redis 或任意 SQL/DDL。
 
 ---
 
-## 4. 目录结构
+## 4. 关键目录
 
-```
-Logos/
-├── core/                           # 横切关注点
-│   ├── config.py                   # AppConfig (pydantic-settings)
-│   ├── config_manager.py           # ConfigManager 热重载单例
-│   ├── protocols.py                # Protocol 接口契约
-│   ├── factory.py                  # 工厂函数
-│   ├── exceptions.py               # 统一异常层次
-│   ├── logging.py                  # structlog 配置
-│   └── retry.py                    # @with_retry 指数退避
-│
-├── models/                         # 领域模型 (纯 dataclass)
-│   ├── article.py                  # ArticleEntity + ArticleDTO + Mapper
-│   ├── agent_session.py            # 通用 Agent 会话 + 深度研究 todo
-│   ├── memory.py                   # 三层记忆系统数据模型
-│   ├── brief.py                    # DailyBrief
-│   ├── chunk.py                    # Chunk + ParentChunk
-│   └── search.py                   # SearchQuery + SearchResult + ChunkSearchResult
-│
-├── infrastructure/                 # 基础设施层 (实现 Protocol)
-│   ├── collector.py                # NewsCollector (feedparser + trafilatura)
-│   ├── postgres_article_store.py   # PostgresArticleStore
-│   ├── agent_session_store.py      # 通用 Agent session: PostgreSQL + Redis
-│   ├── memory_store.py             # 核心记忆 + 持久记忆 PostgreSQL 存储
-│   ├── pgvector_store.py           # PgVectorStore (chunk 级别)
-│   ├── chunking_service.py         # ChunkingService (Markdown 父子分块)
-│   ├── keyword_search_service.py   # KeywordSearchService (PostgreSQL FTS)
-│   ├── hybrid_search_service.py    # HybridSearchService (RRF 混合检索)
-│   ├── llm_client.py               # 4 个 LLM 客户端
-│   ├── embedding_client.py         # OpenAICompatibleEmbeddingClient
-│   ├── rerank_client.py            # OpenAICompatibleRerankClient
-│   ├── markdown_converter.py       # NewsMarkdownConverter
-│   ├── web_crawler.py              # WebCrawler (Crawlee)
-│   └── web_search_client.py        # DuckDuckGo + Tavily
-│
-├── services/                       # 应用服务层
-│   ├── pipeline_service.py         # 抓取→存储→摘要→分块→向量化
-│   ├── query_service.py            # ReAct Agent 问答入口
-│   ├── memory_service.py           # 三层记忆上下文构建与会话压缩
-│   ├── brief_service.py            # 日报生成
-│   ├── webhook_service.py          # 多平台推送
-│   ├── summary_service.py          # AI 批量摘要
-│   ├── web_search_service.py       # 多引擎并发搜索
-│   └── deep_research_service.py    # 深度研究报告
-│
-├── agent/                          # Agent 智能体层
-│   ├── react/                      # ReAct 推理-行动循环
-│   │   ├── agent.py                # ReActAgent + AgentEvent + AgentResult
-│   │   ├── parser.py               # LLM 输出解析器
-│   │   └── prompts.py              # System prompt 模板
-│   └── tools/                      # 工具系统
-│       ├── base.py                 # BaseTool 抽象基类
-│       ├── registry.py             # ToolRegistry 线程安全单例
-│       ├── chain.py                # ToolChain 链式编排
-│       ├── executor.py             # AsyncToolExecutor
-│       └── builtin/                # 6 个内置工具
-│
-├── delivery/                       # 后端表现层
-│   ├── server.py                   # FastAPI 应用入口
-│   ├── cli.py                      # CLI 调试工具
-│   └── api/                        # 9 个路由模块
-│
-├── scheduler/                      # 调度层 (Celery)
-│   ├── celery_app.py               # Celery 配置 + Beat 规则
-│   └── tasks.py                    # 异步任务定义
-│
-├── frontend/                       # Vue 3 前端
-│   └── src/
-│       ├── views/                  # 7 个页面组件
-│       ├── components/             # 通用组件
-│       └── api/                    # Axios API 封装
-│
-├── docs/                           # 项目文档
-│   ├── design-docs/                # 详细设计文档
-│   ├── exec-plans/                 # 执行计划 (active/ + completed/)
-│   ├── generated/                  # 生成文档 (DB Schema 等)
-│   ├── product-specs/              # 产品规格 (API 参考等)
-│   ├── references/                 # 参考资料 (外部依赖等)
-│   ├── DESIGN.md                   # 设计哲学概述
-│   └── PLANS.md                    # 开发路线图
-│
-├── evals/                          # RAGAs 评估模块
-│   ├── config.py                  # 评判 LLM 配置加载
-│   ├── adapters.py                # Logos 数据 → RAGAs Sample 转换
-│   ├── metrics.py                 # 三维度指标预设
-│   ├── runner.py                  # LogosEvalRunner 评估编排
-│   ├── eval_config.json           # 评判 LLM 配置（OpenAI 兼容）
-│   ├── datasets/                  # 评估数据集（黄金 QA + 合成）
-│   ├── results/                   # 评估结果输出
-│   └── scripts/                   # CLI: run_eval.py + generate_testset.py
-│
-├── tests/                          # 测试
-├── data/                           # 运行时数据 (.gitignore)
-├── output/                         # 日报 + 研究报告
-├── Dockerfile                      # 应用镜像（Vue 构建 + Python 运行时）
-├── docker-compose.yml              # 本地基础设施容器编排
-├── docker-compose.prod.yml         # VPS 生产编排
-├── Caddyfile                       # 生产反向代理 + Basic Auth
-├── ARCHITECTURE.md                 # 本文档
-└── AGENTS.md                       # AI 编码助手上下文
+```text
+core/
+  config.py                 # AppConfig，含 Qdrant 配置和 embedding vector size
+  config_manager.py         # ConfigManager，缓存 document/vector/task/redis 等基础设施
+  protocols.py              # DocumentStoreProtocol / VectorIndexProtocol / IntelStoreProtocol 等
+  factory.py                # 基础设施与 Service 工厂
+
+models/
+  document.py               # SourceDocument, ParentDocumentChunk, ChildChunkPoint
+  intel.py                  # IntelFact / fact 类型 / 维度
+  evidence.py               # EvidenceRef
+  insight.py                # InsightClaim
+  task_run.py               # TaskRun, TaskStage, TaskEvent
+  file_asset.py             # UploadBatch, DocumentBlob, ParsedDocument
+  article.py                # 新闻 UI/API 文章模型
+  competitor.py             # 竞品 + 产品线
+  report.py                 # 分析报告 + 来源引用 + 质量审查 + 审计
+  search.py                 # 查询/检索结果 DTO
+
+infrastructure/
+  document_store.py         # PostgreSQL 文档、父块、point 状态权威存储
+  upload_store.py           # PostgreSQL 上传批次与文件对象 metadata
+  task_run_store.py         # PostgreSQL 任务 run/stage/event 权威存储
+  redis/state_store.py      # Redis 锁、热状态、事件 stream、幂等和缓存
+  files/blob_store.py       # 本地文件对象存储，按 hash 保存
+  files/archive_extractor.py# zip 安全解包
+  files/type_detector.py    # 保守文件类型识别
+  parsers/document_parser.py# TXT/MD/HTML/CSV/TSV 标准化解析
+  qdrant/vector_index.py    # QdrantVectorIndex
+  chunking_service.py       # Markdown-aware 父子分块
+  hybrid_search_service.py  # Qdrant + PostgreSQL keyword RRF
+  keyword_search_service.py # PostgreSQL document_parent_chunks FTS
+  postgres_article_store.py # 文章列表、摘要状态、旧新闻 API 支撑
+  intel_store.py            # 结构化事实、fact 归因和 evidence_refs
+  insight_store.py          # insight_claims 和 claim evidence
+  report_store.py           # analysis_reports、报告关系表、质量审查和审计
+  auth_store.py             # API Key 哈希、角色和最近使用时间
+  config_audit_store.py     # 配置变更审计
+  structured_extraction_client.py # 独立结构化抽取 AI 客户端
+  judge_client.py           # 独立报告质量 Judge 客户端
+
+migrations/
+  001_infrastructure_foundation.sql # 新基础 schema，无 vector extension
+  003_competitive_analysis_schema.sql
+  004_intel_fact_schema.sql
+  005_report_quality_security_schema.sql
 ```
 
 ---
 
-## 5. 核心接口契约 (Protocol)
-
-系统通过 `typing.Protocol` 定义接口，实现基础设施层与服务层的可替换性：
+## 5. 核心接口契约
 
 | Protocol | 核心方法 | 当前实现 |
 |---|---|---|
-| `ArticleStoreProtocol` | `save_articles`, `get_unembedded`, `mark_embedded`, `search_by_keyword`, `get_recent`, `get_stats`, `cleanup_old_articles` | `PostgresArticleStore` |
-| `VectorStoreProtocol` | `add_chunks`, `search_chunks`, `delete_by_article_ids` | `PgVectorStore` |
-| `LLMClientProtocol` | `generate`, `generate_stream`, `generate_with_history`, `generate_with_history_stream` | 4 个客户端 |
+| `DocumentStoreProtocol` | `save_document`, `save_parent_chunks`, `get_parent_chunks_by_ids`, `list_parent_chunks`, `search_parent_chunks_by_keyword`, `mark_points_vectorized`, `mark_points_vector_failed` | `PostgresDocumentStore` |
+| `VectorIndexProtocol` | `healthcheck`, `ensure_collection`, `recreate_collection`, `upsert_child_chunks`, `search_child_chunks`, `delete_by_document_ids`, `delete_by_point_ids` | `QdrantVectorIndex` |
+| `UploadStoreProtocol` | `create_batch`, `finish_batch`, `save_blob`, `get_blob`, `list_blobs`, `find_blobs_by_sha256`, `update_blob_status` | `PostgresUploadStore` |
+| `FileBlobStoreProtocol` | `put`, `open`, `delete`, `exists`, `quarantine` | `LocalFileBlobStore` |
+| `ArchiveExtractorProtocol` | `can_extract`, `extract` | `ArchiveExtractor` |
+| `DocumentParserProtocol` | `detect`, `parse` | `DocumentParser` |
+| `TaskRunStoreProtocol` | `create_run`, `start_run`, `finish_run`, `create_stage`, `finish_stage`, `append_event`, `get_run`, `list_stages`, `list_events` | `PostgresTaskRunStore` |
+| `RedisStateStoreProtocol` | `acquire_lock`, `release_lock`, `set_json`, `get_json`, `set_task_status`, `append_task_event`, `set_idempotency_key` | `RedisStateStore` |
+| `ArticleStoreProtocol` | 新闻文章保存、摘要状态、列表查询、统计；不作为 Phase 2 事实层依赖 | `PostgresArticleStore` |
 | `EmbeddingClientProtocol` | `embed` | `OpenAICompatibleEmbeddingClient` |
 | `RerankClientProtocol` | `rerank` | `OpenAICompatibleRerankClient` |
-| `AgentSessionStoreProtocol` | `create_general_session`, `create_session`, `append_event`, `append_message`, `update_summary` | `AgentSessionStore` |
-| `MemoryStoreProtocol` | `get_active_core_memories`, `list_memory_index`, `create_persistent_memory` | `MemoryStore` |
-| `WebhookServiceProtocol` | `broadcast`, `send_to_channel`, `load_channels`, `get_auto_push` | `WebhookService` |
+| `LLMClientProtocol` | `generate`, `generate_stream`, `generate_with_history` | 4 个 LLM 客户端 |
+| `StructuredExtractionClientProtocol` | `extract_json` | 4 个结构化抽取客户端 |
+| `JudgeClientProtocol` | `judge_json` | 4 个报告质量 Judge 客户端 |
+| `AuthStoreProtocol` | `create_api_key`, `get_api_key_by_hash`, `update_last_used` | `PostgresAuthStore` |
+| `ConfigAuditStoreProtocol` | `append_config_audit`, `list_config_audit` | `PostgresConfigAuditStore` |
+| `IntelStoreProtocol` | `save_fact`, `get_fact`, `list_facts`, `update_fact_status`, fact 竞品/产品 link，evidence 保存/查询 | `PostgresIntelStore` |
+| `InsightStoreProtocol` | `save_claim`, `get_claim`, `list_claims`, `update_claim_status`, `attach_evidence` | `PostgresInsightStore` |
+| `CompetitorStoreProtocol` | 竞品、产品线、情报关联 | `PostgresCompetitorStore` |
+| `ReportStoreProtocol` | 报告、report-claim/report-evidence 关系、质量审查、审计链路 | `PostgresReportStore` |
+| `AgentSessionStoreProtocol` / `MemoryStoreProtocol` | Agent 会话与记忆 | PostgreSQL + Redis 实现 |
 
-→ 完整接口设计与实现说明：[docs/design-docs/protocol-contracts.md](docs/design-docs/protocol-contracts.md)
-
----
-
-## 6. 数据流架构
-
-### 6.1 Pipeline 数据流（定时/手动触发）
-
-```
-数据源 (RSS + 网页爬虫)
-    → NewsCollector.fetch_all() 并发 RSS 抓取 + WebCrawler.crawl_all()
-    → NewsMarkdownConverter.convert_batch()     HTML→Markdown
-    → PostgresArticleStore.save_articles()      SHA256 去重
-    → SummaryService.summarize_pending()        LLM 摘要+标签
-    → ChunkingService.chunk_articles()          父子分块
-    → EmbeddingClient.embed()                   子 chunk 向量化
-    → PgVectorStore.add_chunks()                写入 PostgreSQL child_chunks
-    → PostgresArticleStore.save_parent_chunks() 写入 PostgreSQL parent_chunks
-    → mark_embedded()                            完成
-```
-
-### 6.2 ReAct Agent 问答数据流
-
-```
-用户问题 → QueryService.answer_agent_stream()
-    → AgentSessionStore.create_general_session()/get_session()
-    → MemoryService.build_memory_context()
-    → ReActAgent.run_stream(question)
-    → while steps < max_steps:
-        → LLM.generate_with_history(messages)
-        → ReActParser.parse() → Thought / Action / Answer
-        → [Action] → ToolRegistry.get(tool).execute(**params)
-        → yield AgentEvent → SSE 传输到前端
-```
-
-### 6.3 混合检索数据流
-
-```
-查询 → ┌─ 向量检索: Embedding → pgvector search_chunks → 子→父去重排名
-       └─ 关键词检索: jieba 分词 → PostgreSQL tsvector @@ query
-       → RRF 融合 (k=60, 加权)
-       → PostgreSQL get_parent_chunks_by_ids()
-       → [可选] Rerank 精排
-       → 最终 top_k 父 chunks → LLM
-```
-
-**检索模式**：`hybrid`（默认）| `semantic` | `keyword`
-**降级策略**：任一通道失败 → 使用另一通道 → 双失败 → 回退文章级 ILIKE
-
-### 6.4 简报生成 + 推送
-
-```
-触发 → BriefService.generate(hours=24)
-     → get_recent() → 格式化 context → LLM 生成 → 保存 .md
-     → [auto_push?] → WebhookService.broadcast()
-     → 飞书/钉钉/企业微信/Telegram/ntfy
-```
-
-### 6.5 深度研究
-
-```
-研究主题 → PlanExecuteRunner.generate_plan() → 用户审阅确认
-         → PlanExecuteRunner.execute() → MemoryService.build_memory_context()
-         → ReActAgent (max_steps=15)
-         → 多步: 搜知识库 → 读全文 → Web 搜索 → 综合报告
-         → DeepResearchService 自动保存 output/research/
-```
-
-### 6.6 三层记忆系统
-
-```
-core_memory_revisions(active)
-    + persistent_memories(active → MEMORY 索引)
-    + agent_sessions.summary
-    → 注入普通问答 / 深度研究 Agent system prompt
-```
-
-- 核心记忆：全局 Agent 工作规则、工具说明、摘要模板，采用版本化 revision，不物理删除。
-- 持久记忆：`user` / `feedback` / `project` 三类跨会话记忆，默认 `pending`，用户确认后进入 MEMORY 索引。
-- 会话记忆：普通问答和深度研究共用 `agent_sessions`；达到 10k token 后开始摘要，后续每 5k token 更新，失败 3 次后退避为 10k。
-
-→ 完整 API 路由参考：[docs/product-specs/api-reference.md](docs/product-specs/api-reference.md)
+旧向量 Store 协议、旧 PostgreSQL 向量实现和旧向量工厂函数已从当前基础设施契约中移除。
 
 ---
 
-## 7. 数据模型
+### 5.1 报告生成与质量门禁
 
-### 核心实体关系
+`ReportService.generate_analysis_report()` 是 API 和 Agent 工具共用的唯一报告生成入口。工作流为：构建报告上下文包 -> 选择或生成 draft claims -> 调用主 LLM 起草 Markdown -> 保存 `analysis_reports`、`report_claims`、`report_evidence_refs` -> 调用 `ReportQualityService` -> 根据审查结果更新状态。
 
-```
-Article (1) ──→ (N) Chunk (子分块, PostgreSQL/pgvector)
-Article (1) ──→ (N) ParentChunk (父分块, PostgreSQL)
-Chunk (N)   ──→ (1) ParentChunk (通过 parent_chunk_id)
-```
+`ReportQualityService` 先执行规则门禁，再按配置调用独立 `JudgeClientProtocol`。规则门禁会阻断空报告、无 evidence、无效 citation、不可追踪 evidence、无效竞品和未声明的数据限制；Judge 不可用时，规则通过的报告进入 `waiting_review/needs_human`，不会自动发布。默认状态流转为 `draft -> quality_reviewing -> revision_required|waiting_review`。
 
-| 实体 | 存储 | 用途 |
-|---|---|---|
-| `ArticleEntity` / `ArticleDTO` | PostgreSQL `articles` | 文章元数据 + 全文 |
-| `ParentChunk` | PostgreSQL `parent_chunks` | LLM 召回上下文 + 全文索引 |
-| `Chunk` | PostgreSQL `child_chunks` | 向量检索单元 |
+审批发布由 `ReportService.approve_report()`、`reject_report()` 和 `publish_report()` 统一处理，Delivery 层不得直接修改报告状态。只有 `waiting_review + passed` 可审批通过或退回修订，只有 `approved + passed` 可发布；每次审批、拒绝和发布都会写入 `analysis_audit_log`。
 
-→ 完整 Schema 与 DDL：[docs/generated/dbdoc/](docs/generated/dbdoc/) (tbls 自动生成)
-→ 业务规则补充：[docs/generated/db-schema.md](docs/generated/db-schema.md)
+Phase 3 Step 8 验收要求这些约束同时由自动化测试和生产 smoke 流程覆盖：无证据关键结论、无效 citation、Judge JSON 解析失败或低分不得进入 `approved/published`；`generate_analysis_report` Agent 工具只能调用 `ReportService`，不能绕过质量门禁。
 
----
+### 5.2 应用级认证、授权与配置审计
 
-## 8. 配置管理
+FastAPI 使用 `delivery/auth.py` 提供的 API Key 认证和角色依赖。请求优先读取 `Authorization: Bearer <api_key>`，兼容 `X-API-Key`；明文 key 只在创建时出现一次，数据库 `api_keys` 仅保存 SHA-256 hash。`APP_ENV=development` 且 `AUTH_ENABLED=false` 时注入 `system/admin`，生产环境必须启用认证。
 
-| 配置项 | 存储位置 | 管理方式 |
-|---|---|---|
-| LLM/Embedding/Rerank API | `.env` | 前端 ConfigView 通过 API 读写 |
-| RSS 源列表 | `data/feeds_config.json` | `core/source_config.py` 读写，前端 SettingsView 管理 |
-| 爬虫源列表 | `data/sites_config.json` | `core/source_config.py` 读写，前端 SettingsView 管理 |
-| 推送渠道 | `data/webhook_config.json` | 前端 WebhookView |
-| 应用默认值 | `core/config.py` | pydantic Field default |
+角色权限：
 
-→ 完整字段参考：[docs/references/external-deps.md](docs/references/external-deps.md)
+| 角色 | 权限 |
+|---|---|
+| `viewer` | 读取 facts、claims、competitors、reports、tasks、report audit/quality |
+| `analyst` | viewer 权限 + 生成报告、重跑质量门禁、运行 Pipeline、创建/更新 draft facts/claims、Agent/Research 分析 |
+| `admin` | 全部权限 + 配置修改/重载、配置审计、报告 approve/reject/publish/delete、Webhook 管理和推送 |
+
+配置修改由 `ConfigAuditService` 计算 diff、脱敏 secret 并写入 `config_audit_log`。生产环境下 `APP_ENV`、`AUTH_ENABLED`、数据库/Redis/Qdrant 连接和本地存储路径属于只读部署配置，只能通过部署环境变量变更。
 
 ---
 
-## 9. 异常层次
+## 6. RAG 数据流
 
-```
-NewsAssistantError (基础异常)
-├── CollectorError → SourceUnavailableError
-├── StoreError
-├── EmbeddingError
-├── RerankError
-├── LLMError → RateLimitError
-├── ConfigError
-└── ToolError
-    ├── ToolNotFoundError
-    ├── ToolValidationError
-    ├── ToolExecutionError
-    ├── ToolTimeoutError
-    └── ToolChainError
+### 6.1 Pipeline 写入
+
+```text
+POST /api/news/pipeline
+  -> create task_runs row
+  -> Celery task_id = task_runs.id
+
+RSS/Web sources
+  -> NewsCollector / WebCrawler
+  -> NewsMarkdownConverter
+  -> PostgresArticleStore.save_articles()  # legacy news list side path
+  -> Article -> SourceDocument
+  -> PostgresDocumentStore.save_document()
+  -> ChunkingService.chunk_documents()
+       子块: ChildChunkPoint，<=512 tokens，有且只有一个 parent_chunk_id
+       父块: ParentDocumentChunk，约 1024 tokens，连续子块组成
+       overlap: 相邻父块共享尾部子块，父块 child_point_ids 保留 overlap 关系
+  -> PostgresDocumentStore.save_parent_chunks()
+  -> EmbeddingClient.embed(child contents)
+  -> QdrantVectorIndex.upsert_child_chunks()
+  -> PostgresDocumentStore.mark_points_vectorized()
+  -> IntelService.extract_facts_from_document()
+  -> CompetitorService.auto_link_facts()
 ```
 
-所有外部调用通过 `@with_retry` 自动指数退避重试（默认 3 次，基数 2.0）。
+Pipeline 运行期间通过 `TaskRunReporter` 写入 `task_runs/task_stages/task_events`，阶段覆盖 `collect`、`markdown`、`store_source_documents`、`chunk_and_vectorize`、`extract_intel_facts` 和 `link_facts`。Redis 只保存执行期热状态和锁：`logos:lock:pipeline`、`logos:lock:vectorize:{document_id}`、`logos:task:{run_id}`、`logos:task_events:{run_id}`；结构化抽取结果可按 `logos:intel_extract:{document_id}:{extraction_version}` 缓存。手动 API 触发返回的 `task_id` 同时是 PostgreSQL `task_runs.id` 和 Celery task id。
+
+### 6.2 混合检索
+
+```text
+Query
+  -> EmbeddingClient.embed([query])
+  -> QdrantVectorIndex.search_child_chunks()
+       返回子块命中和 parent_chunk_id
+  -> DocumentStore.search_parent_chunks_by_keyword()
+       在 document_parent_chunks.search_vector 上做全文搜索
+  -> HybridSearchService RRF 融合
+  -> 按 parent_chunk_id 去重
+  -> DocumentStore.get_parent_chunks_by_ids()
+  -> 可选 Rerank
+  -> LLM 使用完整父块上下文回答
+```
+
+语义通道失败时可降级到关键词通道；关键词通道失败时可保留语义通道；双通道失败才返回空结果或上层错误。
+
+### 6.3 上传文档摄入
+
+```text
+Uploaded files / zip archives
+  -> scheduler.tasks.run_upload_batch_task(batch_id)
+  -> Redis lock logos:lock:upload:{batch_id}
+  -> LocalFileBlobStore.put()
+  -> PostgresUploadStore.save_blob()
+  -> ArchiveExtractor.extract() for zip
+  -> DocumentParser.parse()
+       TXT/MD/HTML/CSV/TSV -> normalized Markdown/text
+  -> SourceDocument(source_type="upload")
+  -> PostgresDocumentStore.save_document()
+  -> ChunkingService.chunk_document()
+       子块: ChildChunkPoint -> Qdrant payload/vector
+       父块: ParentDocumentChunk -> PostgreSQL FTS/context
+  -> EmbeddingClient.embed(child contents)
+  -> QdrantVectorIndex.upsert_child_chunks()
+  -> PostgresDocumentStore.mark_points_vectorized()
+```
+
+上传批次摄入复用同一个 `task_runs` 记录；单个 blob 解析失败写入 blob error 和任务事件，同批次其他文件继续处理。文档向量化阶段使用 `logos:lock:vectorize:{document_id}`，Qdrant upsert 成功后才把 PostgreSQL point 状态标为 `vectorized`。
+
+PDF/DOCX 目前只做类型识别并返回 unsupported，不伪装为解析成功。压缩包只启用 zip，且拒绝路径穿越、绝对路径、空文件和超限解包。
 
 ---
 
-## 10. 进程模型
+## 7. 数据模型与存储边界
 
+### 7.1 当前实体关系
+
+```text
+SourceDocument (1) -> (N) ParentDocumentChunk
+SourceDocument (1) -> (N) document_vector_points
+SourceDocument (1) -> (N) IntelFact
+ParentDocumentChunk (1) -> (N) EvidenceRef
+ParentDocumentChunk (1) -> (N) ChildChunkPoint primary ownership
+ParentDocumentChunk (N) -> (N) ChildChunkPoint overlap via child_point_ids
+ChildChunkPoint -> Qdrant point payload + vector
+
+Competitor (1) -> (N) Product
+IntelFact (N) -> (N) Competitor/Product
+IntelFact (1) -> (N) EvidenceRef
+InsightClaim (N) -> (N) IntelFact via fact_ids
+InsightClaim (1) -> (N) EvidenceRef
+AnalysisReport (N) -> report_claims/report_evidence_refs/report_quality_reviews + source refs + audit trail
 ```
-=== 本地开发基础设施层 (docker compose up -d) ===
-  容器 1: logos-postgres  (:5432)  — 文章 + 父/子 chunk + 向量 + 全文索引
-  容器 2: logos-redis     (:6379)  — Celery Broker
 
-=== 应用层 (start_dev.bat) ===
-  进程 1: FastAPI Server  (:8005)  — 处理 /api/* 请求
-  进程 2: Celery Worker            — 异步任务执行
-  进程 3: Celery Beat              — 定时触发
-  进程 4: Vite Dev Server (:5173)  — 前端开发（开发模式）
+### 7.2 PostgreSQL
+
+PostgreSQL 是权威业务层：
+
+- `source_documents`：统一来源文档 metadata、正文、来源、关联竞品/产品、解析状态。
+- `document_parent_chunks`：父块权威正文、token 数、`child_point_ids`、heading path、全文索引 `search_vector`。
+- `document_vector_points`：Qdrant point 状态、`point_id`、`parent_chunk_id`、`chunk_index`、hash、token 数、错误信息。
+- `task_runs` / `task_stages` / `task_events`：异步任务历史、阶段结果和 append-only 审计事件。
+- `upload_batches` / `document_blobs`：上传与文件对象基础表。
+- `competitors` / `competitor_products` / `analysis_reports`：竞品和报告业务表。
+- `report_claims` / `report_evidence_refs` / `report_quality_reviews`：报告到 claim/evidence 的关系、引用快照和质量审查结果。
+- `config_audit_log` / `api_keys`：配置变更审计和应用 API Key 哈希。
+- `intel_facts` / `intel_fact_competitors` / `intel_fact_products`：结构化事实、事件、信号及事实级竞品/产品归因。
+- `evidence_refs` / `insight_claims`：事实/claim 证据引用和分析结论。
+
+PostgreSQL 不保存子块 embedding，也不创建新的子块正文表；子块正文作为 Qdrant payload 保存。
+
+### 7.3 Qdrant
+
+主 collection：
+
+```text
+insightforge_documents_v1
 ```
 
-进程间数据共享：PostgreSQL + 文件系统。
+point id 使用稳定 UUID，由 `document_id` 和 `chunk_index` 派生，满足 Qdrant 对 point id 的整数/UUID 约束。业务追踪字段保存在 payload 中：
 
-生产部署使用 `docker-compose.prod.yml`：
-
+```text
+document_id, parent_chunk_id, chunk_index
 ```
+
+Qdrant vector 保存子块 embedding；payload 保存子块正文和检索 metadata：`document_id`、`parent_chunk_id`、`chunk_index`、`content`、`content_hash`、`token_count`、`heading_path`、`doc_name`、`source`、`url`、`source_type`、`document_type`、`competitor_ids`、`product_ids`、`language`、`published_at`、`created_at`、`metadata`。
+
+---
+
+### 7.4 Redis
+
+Redis 是执行期状态层，不保存长期事实：
+
+- 分布式锁：如 `logos:lock:pipeline`、`logos:lock:upload:{batch_id}`。
+- 任务热状态：`logos:task:{run_id}`。
+- 任务事件 stream：`logos:task_events:{run_id}`。
+- 幂等键和短期缓存：如 `logos:idempotency:*`、`logos:cache:*`。
+
+`RedisStateStore` 在 Redis 不可用时降级返回 `False`/`None`，长期任务历史仍以 PostgreSQL `task_runs/task_stages/task_events` 为准。
+
+---
+
+## 8. 父子分块保证
+
+1. 子块按 Markdown 标题、段落、列表、表格、代码块等结构边界切分；超长 block 才按句子拆分，token 截断只作为兜底。
+2. 子块最大 512 tokens，必须保留 `heading_path`、`doc_name`、`source`、`url`、`document_type`、`competitor_ids`、`product_ids`、`language` 等 metadata。
+3. 父块由连续子块贪心组合到约 1024 tokens，不拆碎子块。
+4. 相邻父块通过共享尾部子块达到约 100 tokens overlap。
+5. 共享子块的 Qdrant point 仍只有一个主 `parent_chunk_id`；父块的 `child_point_ids` 保留 overlap 关系。
+6. 短文档仍生成一个父块和至少一个子块，保证检索路径一致。
+
+---
+
+## 9. 进程与部署模型
+
+本地开发：
+
+```text
+docker compose up -d
+  logos-postgres :5432  PostgreSQL 16
+  logos-redis    :6379  Celery broker/result backend
+  logos-qdrant   :6333  Qdrant REST
+
+start_dev.bat
+  FastAPI Server  :8005
+  Celery Worker
+  Celery Beat
+  Vite Dev Server :5173
+```
+
+生产部署：
+
+```text
 公网 80/443
-  → caddy (Basic Auth + reverse proxy)
-  → web    (FastAPI + Vue 静态资源, :8005)
+  -> caddy (Basic Auth + reverse proxy)
+  -> web (FastAPI + Vue 静态资源)
 
-migrate  一次性初始化 PostgreSQL schema + migrations/*.sql
-worker   Celery Worker 执行 Pipeline / Brief / Cleanup
-beat     Celery Beat 定时投递任务
-postgres PostgreSQL 16 + pgvector
-redis    Celery Broker / Result Backend
-flower   可选 monitoring profile
+内部服务:
+  migrate  一次性执行 SQL migration
+  worker   Celery Worker
+  beat     Celery Beat
+  postgres PostgreSQL 16
+  redis    Redis 7
+  qdrant   Qdrant，不公开端口
 ```
 
-生产环境只发布 Caddy 端口；PostgreSQL、Redis、Web、Worker、Beat 默认不直接暴露到公网。`.env` 作为共享绑定文件挂载到 `/app/.env`，`data/` 和 `output/` 使用 Docker Named Volumes 持久化。
+生产环境只公开 Caddy；PostgreSQL、Redis、Qdrant、Worker、Beat 不直接暴露到公网。
 
 ---
 
-## 11. 依赖注入
+## 10. 依赖注入
 
-系统使用**工厂函数**（`core/factory.py`）+ **ConfigManager 单例**：
+系统使用 `core/factory.py` 工厂函数和 `ConfigManager` 单例缓存：
 
 ```python
-# 基础设施层工厂函数 (8 个)
-create_article_store(config)      → PostgresArticleStore
-create_agent_session_store(config) → AgentSessionStore
-create_memory_store(config)       → MemoryStore
-create_vector_store(config)       → PgVectorStore
-create_llm_client(config)         → LLMClient (按 provider 选择)
-create_embedding_client(config)   → OpenAICompatibleEmbeddingClient
-create_rerank_client(config)      → RerankClient | None
-create_summary_llm_client(config) → LLMClient (可复用主 LLM)
-create_chunking_service(config)   → ChunkingService
-
-# Service 层工厂函数 (4 个)
-create_webhook_service()          → WebhookService
-create_deep_research_service()    → DeepResearchService
-create_query_service(config, mgr) → QueryService (含 MemoryService)
-create_memory_service(mgr)        → MemoryService
-
-# ConfigManager 缓存全部实例，reload() 支持热重载
-# Service 层使用懒加载，依赖的基础设施变更时自动清空缓存
+create_article_store(config)       -> PostgresArticleStore
+create_document_store(config)      -> PostgresDocumentStore
+create_task_run_store(config)      -> PostgresTaskRunStore
+create_redis_state_store(config)   -> RedisStateStore
+create_upload_store(config)        -> PostgresUploadStore
+create_file_blob_store(config)     -> LocalFileBlobStore
+create_archive_extractor(config)   -> ArchiveExtractor
+create_document_parser(config)     -> DocumentParser
+create_qdrant_vector_index(config) -> QdrantVectorIndex
+create_intel_store(config)         -> PostgresIntelStore
+create_insight_store(config)       -> PostgresInsightStore
+create_structured_extraction_client(config) -> StructuredExtractionClient
+create_judge_client(config)      -> JudgeClient
+create_embedding_client(config)    -> OpenAICompatibleEmbeddingClient
+create_rerank_client(config)       -> RerankClient | None
+create_llm_client(config)          -> LLMClient
+create_chunking_service(config)    -> ChunkingService
+create_intel_service(config, mgr)  -> IntelService
+create_insight_service(config, mgr)-> InsightService
+create_competitor_service(config, mgr) -> CompetitorService
+create_report_service(config, mgr) -> ReportService  # 内部组装 ReportQualityService
+create_auth_store(config)          -> PostgresAuthStore
+create_config_audit_store(config)  -> PostgresConfigAuditStore
+create_service_registry(config, mgr) -> ServiceRegistry
+create_builtin_tool_definition_registry() -> ToolDefinitionRegistry
+create_builtin_tool_factory(config, mgr) -> BuiltinToolFactory
 ```
 
-→ Agent 智能体层详细设计：[docs/design-docs/react-agent.md](docs/design-docs/react-agent.md)
+`ConfigManager` 暴露 `document_store`、`vector_index`、`task_run_store`、`redis_state_store`、`intel_store`、`insight_store`、`report_store`、`auth_store`、`config_audit_store`、`structured_extraction_client`、`judge_client`、`intel_service`、`insight_service`、`competitor_service`、`report_service`、`service_registry`、`builtin_tool_definition_registry` 和 `builtin_tool_factory`，不再暴露旧向量 Store 属性。`service_registry` 只允许 Agent 工具解析 service 级依赖，不暴露 Store、LLM、Qdrant、Redis 或原始配置对象。
 
 ---
 
-## 12. 当前已知局限性
+## 11. 配置
 
-| 局限 | 影响 | 改进方向 |
-|---|---|---|
-| 单环境 .env | 无 dev/prod 区分 | 多环境 .env |
-| 无认证/授权 | API 完全开放 | 认证中间件 |
-| structlog 已引入但部分模块待迁移 | 日志格式不统一 | 全局迁移 |
+关键基础设施配置：
 
-→ 完整问题清单：[docs/exec-plans/tech-debt-tracker.md](docs/exec-plans/tech-debt-tracker.md)
+| 配置项 | 默认/说明 |
+|---|---|
+| `pg_dsn` | PostgreSQL 连接串 |
+| `celery_broker_url` / `celery_result_backend` | Redis/Celery 连接串 |
+| `qdrant_url` | `http://localhost:6333` |
+| `qdrant_api_key` | 本地为空，生产可设置 |
+| `qdrant_documents_collection` | `insightforge_documents_v1` |
+| `qdrant_distance` | `Cosine` |
+| `vector_backend` | `qdrant` |
+| `embedding_vector_size` | Qdrant collection vector size |
+| `upload_storage_root` | 本地上传文件存储根目录，默认 `storage` |
+| `upload_max_file_size_mb` | 单文件大小限制，默认 `50` |
+| `upload_max_batch_size_mb` | 上传批次大小限制，默认 `200` |
+| `upload_max_archive_files` | 单个 zip 最多解包文件数，默认 `200` |
+| `upload_max_archive_unpacked_mb` | zip 解包后总大小限制，默认 `500` |
+| `upload_allowed_extensions` | `txt,md,markdown,html,htm,csv,tsv,zip` |
+| `structured_extraction_provider` | 结构化抽取 provider，独立于主 LLM |
+| `structured_extraction_model` | 结构化抽取模型 |
+| `structured_extraction_base_url` / `structured_extraction_api_key` | 结构化抽取独立连接配置 |
+| `structured_extraction_temperature` / `structured_extraction_max_tokens` | 结构化抽取默认温度和输出 token 限制 |
+| `judge_provider` / `judge_model` | 报告质量 Judge provider 和模型 |
+| `judge_base_url` / `judge_api_key` | Judge 独立连接配置 |
+| `app_env` / `auth_enabled` / `app_api_keys` | 应用环境与 API Key 认证基线 |
+| `report_quality_min_score` / `report_quality_auto_publish` | 报告质量阈值和自动发布策略，生产默认不自动发布 |
+| `chunk_max_child_tokens` | 512 |
+| `chunk_target_parent_tokens` | 1024 |
+| `chunk_overlap_tokens` | 100 |
+
+---
+
+## 12. 测试与验证
+
+当前基础设施重构覆盖：
+
+- schema 测试：无 `CREATE EXTENSION vector`，无 embedding 列，父块 GIN FTS 索引存在。
+- 分块回归测试：标题路径、metadata、父块 overlap、短文档父子双生成、子块唯一 `parent_chunk_id`。
+- Qdrant 测试：ensure/recreate、upsert/search/delete、payload filter、异常映射。
+- 任务/Redis 测试：run/stage/event 持久化、Redis owner 校验释放锁、Redis 不可用降级。
+- 结构化事实层测试：`IntelFact` / `EvidenceRef` / `InsightClaim` 模型、结构化抽取 JSON 解析、ConfigManager 新组件缓存；PostgreSQL Store 和 migration 测试在 `TEST_PG_DSN` 存在时运行。
+- 报告治理测试：质量规则门禁、Judge 异常降级、报告状态流转、审批发布、Agent 工具调用 `ReportService`、报告 API 质量 payload。
+- 安全与配置测试：API Key 认证、viewer/analyst/admin 权限矩阵、配置脱敏、配置审计、生产健康检查和部署 compose 配置。
+- 端到端基础测试：分块后父块进入 PostgreSQL，子块进入 Qdrant，Qdrant 命中可通过 `parent_chunk_id` 召回父块。
 
 ---
 
 ## 13. 运行方式
 
 ```bash
-# 1. 安装依赖
 pip install -r requirements.txt
 cd frontend && pnpm install && cd ..
 
-# 2. 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入 API Key
-
-# 3. 启动基础设施
 docker compose up -d
 
-# 4. 一键启动所有服务 (Windows)
-./start_dev.bat
-
-# 或分别启动:
-python -m delivery.server              # 后端
-cd frontend && pnpm dev                # 前端
-celery -A scheduler.celery_app worker -l info -P threads  # Worker
-celery -A scheduler.celery_app beat -l info                # Beat
-
-# CLI 调试
-python -m delivery.cli pipeline
-python -m delivery.cli ask "今天有什么重要新闻？"
-python -m delivery.cli stats
+python -m delivery.server
+celery -A scheduler.celery_app worker -l info -P threads
+celery -A scheduler.celery_app beat -l info
+cd frontend && pnpm dev
 ```
 
-### 13.1 VPS 生产部署
+VPS 部署：
 
 ```bash
 cp .env.deploy.example .env
-# 编辑 .env，至少设置 CADDY_DOMAIN、BASIC_AUTH_USER、BASIC_AUTH_HASH、POSTGRES_PASSWORD、PG_DSN 和各类 API Key
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-详细部署、备份、升级和清空重建步骤见 [docs/deployment/docker-vps.md](docs/deployment/docker-vps.md)。
-
----
-
-## 14. RAGAs 评估框架
-
-系统集成了 [RAGAs](https://docs.ragas.io/) 框架，对 AI 能力进行三维度自动化评估，采用 LLM-as-Judge 原理：
-
-### 14.1 评估维度
-
-| 维度 | 评估对象 | 核心指标 | 数据模型 |
-|---|---|---|---|
-| ① 检索质量 | `HybridSearchService` | Context Precision, Context Recall, Noise Sensitivity | `SingleTurnSample` |
-| ② 端到端问答 | `QueryService` → `ReActAgent` | Faithfulness, Response Relevancy | `SingleTurnSample` |
-| ③ Agent 工具调用 | `ReActAgent` 多步推理 | ToolCallAccuracy, AgentGoalAccuracy | `MultiTurnSample` |
-
-### 14.2 评估数据流
-
-```
-黄金数据集 (golden_qa.json)
-    ↓ 对每个 question
-    ├── HybridSearchService.search()     → retrieved_contexts
-    └── QueryService.answer_agent()      → response + AgentEvent[]
-    ↓ adapters.py 转换
-    ├── SingleTurnSample (维度 ①②)
-    └── MultiTurnSample  (维度 ③)
-    ↓ ragas.evaluate()
-    → 评估报告 JSON (evals/results/)
-```
-
-### 14.3 评判 LLM 配置
-
-通过 `evals/eval_config.json` 配置评判 LLM，支持 OpenAI 兼容的自定义端点：
-
-```json
-{
-  "judge_llm": {
-    "model": "gpt-4o-mini",
-    "base_url": "https://api.openai.com/v1",
-    "api_key_env": "OPENAI_API_KEY"
-  }
-}
-```
-
-### 14.4 使用方式
-
-```bash
-# 安装评估依赖（独立于生产依赖）
-pip install -r requirements-eval.txt
-
-# 运行全量评估
-python -m evals.scripts.run_eval --suite all
-
-# 单维度评估
-python -m evals.scripts.run_eval --suite retrieval
-python -m evals.scripts.run_eval --suite e2e
-python -m evals.scripts.run_eval --suite agent
-
-# 从知识库文章生成合成测试集
-python -m evals.scripts.generate_testset --count 50 --size 30
-```
+详细部署说明见 [docs/deployment/docker-vps.md](docs/deployment/docker-vps.md)。

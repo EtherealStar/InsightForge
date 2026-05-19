@@ -1,9 +1,10 @@
 """功能设置 API"""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from core.source_config import load_feeds, save_feeds, load_sites, save_sites
+from delivery.auth import require_admin, require_viewer
 
-router = APIRouter(prefix="/api/settings", tags=["settings"])
+router = APIRouter(prefix="/api/settings", tags=["settings"], dependencies=[Depends(require_viewer)])
 
 
 class FeedItem(BaseModel):
@@ -24,10 +25,6 @@ class SiteItem(BaseModel):
 
 class ScheduleConfig(BaseModel):
     fetch_interval_hours: int = 4
-    daily_brief_hour: int = 8
-    brief_fetch_hours: int = 24
-    brief_mode: str = "daily"  # "daily" or "interval"
-    brief_interval_hours: int = 8
     max_articles_per_fetch: int = 20
     article_retention_days: int = 90
 
@@ -39,7 +36,7 @@ def get_feeds():
     return {"feeds": [{"id": i, **feed} for i, feed in enumerate(feeds)]}
 
 
-@router.post("/feeds")
+@router.post("/feeds", dependencies=[Depends(require_admin)])
 def add_feed(feed: FeedItem):
     """添加 RSS 源"""
     feeds = load_feeds()
@@ -52,7 +49,7 @@ def add_feed(feed: FeedItem):
     return {"status": "ok", "message": f"已添加: {feed.name}"}
 
 
-@router.delete("/feeds/{feed_id}")
+@router.delete("/feeds/{feed_id}", dependencies=[Depends(require_admin)])
 def delete_feed(feed_id: int):
     """删除 RSS 源"""
     feeds = load_feeds()
@@ -70,25 +67,17 @@ def get_schedule():
     env = _read_env_file()
     return ScheduleConfig(
         fetch_interval_hours=int(env.get("FETCH_INTERVAL_HOURS", "4")),
-        daily_brief_hour=int(env.get("DAILY_BRIEF_HOUR", "8")),
-        brief_fetch_hours=int(env.get("BRIEF_FETCH_HOURS", "24")),
-        brief_mode=env.get("BRIEF_MODE", "daily"),
-        brief_interval_hours=int(env.get("BRIEF_INTERVAL_HOURS", "8")),
         max_articles_per_fetch=int(env.get("MAX_ARTICLES_PER_FETCH", "20")),
         article_retention_days=int(env.get("ARTICLE_RETENTION_DAYS", "90")),
     )
 
 
-@router.put("/schedule")
+@router.put("/schedule", dependencies=[Depends(require_admin)])
 def update_schedule(schedule: ScheduleConfig):
     """更新调度配置"""
     from delivery.api.config_router import _write_env_file
     updates = {
         "FETCH_INTERVAL_HOURS": str(schedule.fetch_interval_hours),
-        "DAILY_BRIEF_HOUR": str(schedule.daily_brief_hour),
-        "BRIEF_FETCH_HOURS": str(schedule.brief_fetch_hours),
-        "BRIEF_MODE": schedule.brief_mode,
-        "BRIEF_INTERVAL_HOURS": str(schedule.brief_interval_hours),
         "MAX_ARTICLES_PER_FETCH": str(schedule.max_articles_per_fetch),
         "ARTICLE_RETENTION_DAYS": str(schedule.article_retention_days),
     }
@@ -111,7 +100,7 @@ def get_sites():
     return {"sites": [{"id": i, **site} for i, site in enumerate(sites)]}
 
 
-@router.post("/sites")
+@router.post("/sites", dependencies=[Depends(require_admin)])
 def add_site(site: SiteItem):
     """添加网页爬取源"""
     sites = load_sites()
@@ -132,7 +121,7 @@ def add_site(site: SiteItem):
     return {"status": "ok", "message": f"已添加: {site.name}"}
 
 
-@router.put("/sites/{site_id}")
+@router.put("/sites/{site_id}", dependencies=[Depends(require_admin)])
 def update_site(site_id: int, site: SiteItem):
     """更新网页爬取源"""
     sites = load_sites()
@@ -152,7 +141,7 @@ def update_site(site_id: int, site: SiteItem):
     return {"status": "ok", "message": f"已更新: {site.name}"}
 
 
-@router.delete("/sites/{site_id}")
+@router.delete("/sites/{site_id}", dependencies=[Depends(require_admin)])
 def delete_site(site_id: int):
     """删除网页爬取源"""
     sites = load_sites()

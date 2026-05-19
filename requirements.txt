@@ -15,6 +15,7 @@ tavily-python>=0.5.0
 
 # 存储
 psycopg2-binary>=2.9.9
+qdrant-client>=1.9.0
 
 # Markdown 转换
 markdownify>=0.14.1
@@ -23,7 +24,6 @@ pyyaml>=6.0
 # 调度 (Celery)
 celery[redis]>=5.3.0
 redis>=5.0.0
-flower>=2.0.0
 
 # Web API（Vue 前端）
 fastapi>=0.110.0
@@ -44,6 +44,3 @@ pytest-asyncio>=0.23.0
 # 分词
 jieba>=0.42.1
 tiktoken>=0.7.0
-
-# 进程管理
-honcho>=1.1.0

@@ -1,6 +1,6 @@
 """混合检索服务：向量语义搜索 + 关键词全文搜索 + RRF 融合
 
-编排向量检索（PostgreSQL/pgvector）和关键词检索（PostgreSQL FTS）两路结果，
+编排向量检索（Qdrant child points）和关键词检索（PostgreSQL FTS）两路结果，
 使用 Reciprocal Rank Fusion (RRF) 算法融合排名，
 输出统一的排序结果。
 
@@ -12,14 +12,14 @@ RRF 公式：
 import structlog
 from typing import TYPE_CHECKING
 
-from models.chunk import ParentChunk
+from models.document import ParentDocumentChunk
 from models.search import HybridSearchResult
 
 if TYPE_CHECKING:
     from core.protocols import (
-        VectorStoreProtocol,
+        VectorIndexProtocol,
         EmbeddingClientProtocol,
-        ArticleStoreProtocol,
+        DocumentStoreProtocol,
     )
     from infrastructure.keyword_search_service import KeywordSearchService
 
@@ -35,15 +35,15 @@ class HybridSearchService:
 
     def __init__(
         self,
-        vector_store: "VectorStoreProtocol",
+        vector_index: "VectorIndexProtocol",
         embedding_client: "EmbeddingClientProtocol",
-        article_store: "ArticleStoreProtocol",
+        document_store: "DocumentStoreProtocol",
         keyword_search_service: "KeywordSearchService",
         rrf_k: int = 60,
     ):
-        self._vector_store = vector_store
+        self._vector_index = vector_index
         self._embedding_client = embedding_client
-        self._article_store = article_store
+        self._document_store = document_store
         self._keyword_search = keyword_search_service
         self._rrf_k = rrf_k
 
@@ -51,6 +51,7 @@ class HybridSearchService:
         self,
         query: str,
         top_k: int = 5,
+        filters: dict | None = None,
         vector_weight: float = 1.0,
         keyword_weight: float = 1.0,
         vector_candidates: int | None = None,
@@ -68,6 +69,7 @@ class HybridSearchService:
         Args:
             query: 用户查询文本。
             top_k: 最终返回的结果数量。
+            filters: 文档级过滤条件，会下推到语义和关键词通道。
             vector_weight: 向量检索通道权重（默认 1.0）。
             keyword_weight: 关键词检索通道权重（默认 1.0）。
             vector_candidates: 向量检索候选数量（默认 top_k*3）。
@@ -88,9 +90,10 @@ class HybridSearchService:
         try:
             query_embeddings = self._embedding_client.embed([query])
             if query_embeddings:
-                chunk_results = self._vector_store.search_chunks(
+                chunk_results = self._vector_index.search_child_chunks(
                     query_embedding=query_embeddings[0],
                     top_k=v_candidates,
+                    filters=filters,
                 )
 
                 # 子 chunk → 按 parent_chunk_id 去重，保留顺序
@@ -113,7 +116,9 @@ class HybridSearchService:
 
         try:
             kw_results = self._keyword_search.search(
-                query=query, top_k=k_candidates
+                query=query,
+                top_k=k_candidates,
+                filters=filters,
             )
             for i, cr in enumerate(kw_results):
                 pid = cr.chunk.parent_chunk_id
@@ -145,8 +150,8 @@ class HybridSearchService:
         # 4. 获取父 chunk 内容
         # ------------------------------------------------------------------
         parent_ids = [pid for pid, _ in top_fused]
-        parent_chunks = self._article_store.get_parent_chunks_by_ids(parent_ids)
-        parent_map: dict[str, ParentChunk] = {
+        parent_chunks = self._document_store.get_parent_chunks_by_ids(parent_ids)
+        parent_map: dict[str, ParentDocumentChunk] = {
             pc.parent_chunk_id: pc for pc in parent_chunks
         }
 

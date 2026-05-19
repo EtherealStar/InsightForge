@@ -1,12 +1,12 @@
 """编排 ReAct Agent 查询流程"""
-from typing import Iterator
+from typing import Any, Iterator
 
 import structlog
 
 from core.protocols import (
-    ArticleStoreProtocol,
     AgentSessionStoreProtocol,
-    VectorStoreProtocol,
+    DocumentStoreProtocol,
+    VectorIndexProtocol,
     LLMClientProtocol,
     EmbeddingClientProtocol,
 )
@@ -20,19 +20,21 @@ class QueryService:
 
     def __init__(
         self,
-        article_store: ArticleStoreProtocol,
-        vector_store: VectorStoreProtocol,
+        document_store: DocumentStoreProtocol,
+        vector_index: VectorIndexProtocol,
         llm_client: LLMClientProtocol,
         embedding_client: EmbeddingClientProtocol,
         session_store: AgentSessionStoreProtocol | None = None,
         memory_service: MemoryService | None = None,
+        config_manager: Any | None = None,
     ):
-        self.article_store = article_store
-        self.vector_store = vector_store
+        self.document_store = document_store
+        self.vector_index = vector_index
         self.llm_client = llm_client
         self.embedding_client = embedding_client
         self.session_store = session_store
         self.memory_service = memory_service
+        self._config_manager = config_manager
 
     def _build_agent(
         self,
@@ -57,6 +59,7 @@ class QueryService:
         session_id: str | None = None,
     ):
         """ReAct Agent 非流式问答。"""
+        self._ensure_builtin_tools_registered()
         session = self._ensure_general_session(question, session_id, run_id)
         prompt = self._build_memory_prompt(session.id if session else None, question)
         agent = self._safe_build_agent(
@@ -85,6 +88,7 @@ class QueryService:
         Yields:
             AgentEvent: 推理/行动/观察/回答事件。
         """
+        self._ensure_builtin_tools_registered()
         session = self._ensure_general_session(question, session_id, run_id)
         prompt = self._build_memory_prompt(session.id if session else None, question)
         agent = self._safe_build_agent(
@@ -148,6 +152,22 @@ class QueryService:
         if not memory_context:
             return base_prompt
         return f"{memory_context}\n\n{base_prompt}"
+
+    def _ensure_builtin_tools_registered(self) -> None:
+        """确保当前进程中的内置工具已注册。
+
+        QueryService 可能在 CLI 或测试中被直接构造；只有在提供
+        config_manager 时，才尝试刷新内置工具，避免额外引入全局依赖。
+        """
+        if self._config_manager is None:
+            return
+        try:
+            self._config_manager.bootstrap_builtin_tools(refresh=False)
+        except Exception as e:
+            logger.warning(
+                "agent.tools_prepare_failed",
+                error=str(e),
+            )
 
     def _persist_query_result(self, session_id: str, question: str, result) -> None:
         self.session_store.append_message(session_id, {"role": "user", "content": question})

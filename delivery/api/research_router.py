@@ -5,11 +5,13 @@ import os
 import structlog
 import zipfile
 from typing import Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/api/research", tags=["research"])
+from delivery.auth import require_analyst
+
+router = APIRouter(prefix="/api/research", tags=["research"], dependencies=[Depends(require_analyst)])
 logger = structlog.get_logger(__name__)
 
 _RESEARCH_DIR = os.path.join("output", "research")
@@ -44,6 +46,7 @@ def _get_plan_execute_runner():
         raise HTTPException(
             status_code=503, detail="LLM 客户端未配置，无法执行深度研究"
         )
+    mgr.bootstrap_builtin_tools(refresh=False)
     return PlanExecuteRunner(
         llm_client=mgr.llm_client,
         tool_registry=get_tool_registry(),

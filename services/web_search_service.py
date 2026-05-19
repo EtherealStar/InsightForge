@@ -11,6 +11,7 @@ from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from infrastructure.web_search_client import (
     DuckDuckGoSearchClient,
     TavilySearchClient,
+    NewsAPISearchClient,
     WebSearchResult,
 )
 
@@ -32,10 +33,13 @@ class WebSearchService:
         3. 格式化为 Agent 可读的结构化文本
     """
 
-    def __init__(self, tavily_api_key: str = ""):
+    def __init__(self, tavily_api_key: str = "", newsapi_api_key: str = ""):
         self._ddg_client = DuckDuckGoSearchClient()
         self._tavily_client = (
             TavilySearchClient(tavily_api_key) if tavily_api_key else None
+        )
+        self._newsapi_client = (
+            NewsAPISearchClient(newsapi_api_key) if newsapi_api_key else None
         )
 
     def search_and_aggregate(
@@ -88,6 +92,14 @@ class WebSearchService:
                         self._tavily_client.search, query, max_results
                     )
                 ] = "tavily"
+
+            # NewsAPI — 有 Key 时参与
+            if self._newsapi_client:
+                futures[
+                    executor.submit(
+                        self._newsapi_client.search, query, max_results
+                    )
+                ] = "newsapi"
 
             for future in as_completed(futures):
                 engine_name = futures[future]
