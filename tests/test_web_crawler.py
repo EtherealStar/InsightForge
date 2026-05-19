@@ -119,6 +119,52 @@ def test_thepaper_builtin_rules_reject_section_download_and_comment_urls():
     )
 
 
+def test_bjnews_builtin_rules_accept_article_url():
+    rules = _merge_rules("新京报", "https://www.bjnews.com.cn/")
+
+    assert _url_matches_rules(
+        "https://www.bjnews.com.cn/detail/1779150638129135.html",
+        rules,
+    )
+
+
+def test_bjnews_builtin_rules_reject_non_article_and_share_urls():
+    rules = _merge_rules("新京报", "https://www.bjnews.com.cn/")
+
+    assert not _url_matches_rules("https://www.bjnews.com.cn/site/business", rules)
+    assert not _url_matches_rules("https://www.bjnews.com.cn/subject", rules)
+    assert not _url_matches_rules(
+        "https://m.bjnews.com.cn/detail/1779150638129135.html",
+        rules,
+    )
+    assert not _url_matches_rules(
+        "http://service.weibo.com/share/share.php"
+        "?url=https://www.bjnews.com.cn/detail/1779150638129135.html&title=x",
+        rules,
+    )
+
+
+def test_infzm_builtin_rules_accept_article_url():
+    rules = _merge_rules("南方周末", "https://www.infzm.com/")
+
+    assert _url_matches_rules(
+        "https://www.infzm.com/contents/321843?source=133&source_1=202",
+        rules,
+    )
+
+
+def test_infzm_builtin_rules_reject_non_article_login_and_download_urls():
+    rules = _merge_rules("南方周末", "https://www.infzm.com/")
+
+    assert not _url_matches_rules("https://www.infzm.com/topics/t202.html", rules)
+    assert not _url_matches_rules(
+        "https://www.infzm.com/contents?term_id=121&form_content_id=321843",
+        rules,
+    )
+    assert not _url_matches_rules("https://www.infzm.com/download", rules)
+    assert not _url_matches_rules("https://passport.infzm.com/login", rules)
+
+
 def test_unconfigured_site_keeps_legacy_url_acceptance():
     rules = _merge_rules("Example", "https://example.com/")
 

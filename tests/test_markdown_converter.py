@@ -448,6 +448,7 @@ class TestEndToEnd:
             html_content="",
         )
         converter.convert_article(article)
+        assert article.content.startswith("# 纯文本文章")
         assert "纯文本内容" in article.content
         # 多余空行应被清理
         assert "\n\n\n" not in article.content
@@ -461,5 +462,59 @@ class TestEndToEnd:
             html_content="",
         )
         converter.convert_article(article)
-        expected = "前文\n\n# 一级标题\n\n后文\n\n```python\n# 注释不应被加空行\n```\n\n## 二级标题\n\n结尾"
+        expected = "# 标题测试\n\n前文\n\n## 一级标题\n\n后文\n\n```python\n# 注释不应被加空行\n```\n\n## 二级标题\n\n结尾"
         assert article.content == expected
+
+    def test_empty_html_falls_back_to_plain_content(self, converter):
+        """HTML 转换为空或过短时不应覆盖已有正文。"""
+        html = "<html><body><nav>导航</nav><footer>页脚</footer></body></html>"
+        article = Article(
+            title="BBC 正文",
+            url="https://example.com/news",
+            content="This is the real article body with enough detail to index.",
+            html_content=html,
+        )
+
+        converter.convert_article(article)
+
+        assert article.content.startswith("# BBC 正文")
+        assert "real article body" in article.content
+        assert "导航" not in article.content
+        assert "页脚" not in article.content
+
+    def test_normalizes_unique_h1(self, converter):
+        """文章标题应成为唯一 H1，正文内重复 H1 应去重，其余 H1 降级。"""
+        article = Article(
+            title="主标题",
+            url="https://example.com",
+            content="# 主标题\n\n导语\n\n# 另一个一级标题\n\n正文",
+            html_content="",
+        )
+
+        converter.convert_article(article)
+
+        assert article.content.count("# 主标题") == 1
+        assert "\n# 另一个一级标题" not in article.content
+        assert "## 另一个一级标题" in article.content
+
+    def test_preserves_markdown_block_boundaries(self, converter):
+        """列表、表格、引用、代码块边界应在清理后保留。"""
+        article = Article(
+            title="结构测试",
+            url="https://example.com",
+            content=(
+                "导语\n\n"
+                "- A\n- B\n\n"
+                "| 列 | 值 |\n| --- | --- |\n| x | y |\n\n"
+                "> 引用\n\n"
+                "```python\nprint('ok')\n```"
+            ),
+            html_content="",
+        )
+
+        converter.convert_article(article)
+
+        assert "- A\n- B" in article.content
+        assert "| 列 | 值 |" in article.content
+        assert "> 引用" in article.content
+        assert "```python\nprint('ok')\n```" in article.content

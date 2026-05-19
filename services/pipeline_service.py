@@ -216,16 +216,28 @@ class PipelineService:
             logger.warning("[Pipeline] 分块后无子 chunks")
             return 0
 
-        # 2. 生成子 chunk embedding
+        # 2. 父 chunk 先写入 PostgreSQL，避免 child_chunks 外键指向不存在的父块
+        if all_parents:
+            saved_parents = self.article_store.save_parent_chunks(all_parents)
+            if isinstance(saved_parents, int) and saved_parents < len(all_parents):
+                raise RuntimeError(
+                    f"父 chunk 写入不完整: {saved_parents}/{len(all_parents)}"
+                )
+
+        # 3. 生成子 chunk embedding
         child_texts = [c.content for c in all_children]
         embeddings = self.embedding_client.embed(child_texts)
+        if len(embeddings) != len(all_children):
+            raise RuntimeError(
+                f"Embedding 数量不匹配: {len(embeddings)}/{len(all_children)}"
+            )
 
-        # 3. 子 chunk 向量写入 PostgreSQL/pgvector
+        # 4. 子 chunk 向量写入 PostgreSQL/pgvector
         embedded_count = self.vector_store.add_chunks(all_children, embeddings)
-
-        # 4. 父 chunk 写入 PostgreSQL
-        if all_parents:
-            self.article_store.save_parent_chunks(all_parents)
+        if embedded_count != len(all_children):
+            raise RuntimeError(
+                f"子 chunk 写入不完整: {embedded_count}/{len(all_children)}"
+            )
 
         return embedded_count
 

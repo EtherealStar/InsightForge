@@ -5,7 +5,6 @@
 """
 import json
 import structlog
-import os
 import re
 import hashlib
 from datetime import datetime
@@ -13,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
+import trafilatura
 from bs4 import BeautifulSoup, Tag
 from markdownify import markdownify as md
 
@@ -68,6 +68,25 @@ _THEPAPER_NOISE_LINE_RE = re.compile(
     re.I,
 )
 
+_RESIDUAL_NOISE_LINE_RE = re.compile(
+    r"^(?:Share|Tweet|Login|Published with Ghost|"
+    r"分享|转发|登录|扫码下载|版权所有|Copyright)\b",
+    re.I,
+)
+
+_RESIDUAL_FOOTER_START_RE = re.compile(
+    r"(?m)^(?:#{1,6}\s*)?(?:You might also like|Related posts?|相关阅读|"
+    r"相关文章|更多推荐|猜你喜欢)\.?\s*$",
+    re.I,
+)
+
+_HTML_OR_SCRIPT_NOISE_RE = re.compile(
+    r"<(?:script|style|nav|footer|header)\b|"
+    r"window\.|document\.|\$\(|dataLayer|function\s+\w+\(|"
+    r"\{[^{}\n]*:[^{}\n]*;|--[\w-]+\s*:",
+    re.I,
+)
+
 
 class NewsMarkdownConverter:
     """将新闻文章的 HTML 内容转换为结构化的 Markdown 格式"""
@@ -106,20 +125,16 @@ class NewsMarkdownConverter:
             if metadata.get("tags") and not article.tags:
                 article.tags = metadata["tags"]
 
-        # Step 2: 转换内容为 Markdown
-        if html and html.strip():
-            markdown_content = self._html_to_markdown(
-                html,
-                source=article.source,
-                url=article.url,
-                content_selector=getattr(article, "content_selector", None),
-                noise_selectors=getattr(article, "noise_selectors", None),
-            )
-        elif plain and plain.strip():
-            # 纯文本本身就可视为 Markdown，但做基本清理
-            markdown_content = self._sanitize_markdown(plain)
-        else:
-            markdown_content = ""
+        # Step 2: 从多个候选中选择质量最高的 Markdown，避免 HTML 提取失败时写入空正文
+        markdown_content = self._select_best_markdown(
+            html=html,
+            plain=plain,
+            title=article.title,
+            source=article.source,
+            url=article.url,
+            content_selector=getattr(article, "content_selector", None),
+            noise_selectors=getattr(article, "noise_selectors", None),
+        )
 
         # 更新文章字段
         article.content = markdown_content
@@ -212,6 +227,80 @@ class NewsMarkdownConverter:
     # 内部方法
     # ------------------------------------------------------------------
 
+    # 已定位正文容器并清理噪音的候选加分（优先于全页候选）
+    _SCOPED_BONUS = 400
+
+    def _select_best_markdown(
+        self,
+        html: str = "",
+        plain: str = "",
+        title: str = "",
+        source: str = "",
+        url: str = "",
+        content_selector: str | None = None,
+        noise_selectors: list[str] | None = None,
+    ) -> str:
+        """从 HTML 转换、trafilatura、纯文本回退中选择最可靠的 Markdown。
+
+        当某个候选已成功定位正文容器（scoped=True）时，额外加
+        ``_SCOPED_BONUS`` 分，让"定位容器+清理噪音"的结果优先于全页提取。
+        """
+        site_key = _detect_site_key(source, url)
+        # (name, markdown, scoped)
+        candidates: list[tuple[str, str, bool]] = []
+
+        if html and html.strip():
+            md_text, md_scoped = self._html_to_markdown(
+                html,
+                source=source,
+                url=url,
+                content_selector=content_selector,
+                noise_selectors=noise_selectors,
+            )
+            candidates.append(("html_markdownify", md_text, md_scoped))
+
+            traf_text, traf_scoped = self._html_to_markdown_with_trafilatura(
+                html,
+                site_key=site_key,
+                content_selector=content_selector,
+                noise_selectors=noise_selectors,
+            )
+            candidates.append(("html_trafilatura", traf_text, traf_scoped))
+
+            txt_text, txt_scoped = self._html_to_text_markdown(
+                html,
+                site_key=site_key,
+                content_selector=content_selector,
+                noise_selectors=noise_selectors,
+            )
+            candidates.append(("html_text", txt_text, txt_scoped))
+
+        if plain and plain.strip():
+            candidates.append(
+                ("plain", self._sanitize_markdown(plain, site_key=site_key), False)
+            )
+
+        scored = [
+            (
+                self._score_markdown_quality(text, title=title)
+                + (self._SCOPED_BONUS if scoped else 0),
+                name,
+                text,
+            )
+            for name, text, scoped in candidates
+            if text and text.strip()
+        ]
+        if not scored:
+            return self._normalize_article_markdown("", title)
+
+        scored.sort(reverse=True, key=lambda item: item[0])
+        best_score, best_name, best_text = scored[0]
+        logger.debug(
+            f"Markdown 候选选择: {best_name} score={best_score:.2f} "
+            f"candidates={[(name, round(score, 2)) for score, name, _ in scored]}"
+        )
+        return self._normalize_article_markdown(best_text, title)
+
     def _html_to_markdown(
         self,
         html: str,
@@ -219,7 +308,7 @@ class NewsMarkdownConverter:
         url: str = "",
         content_selector: str | None = None,
         noise_selectors: list[str] | None = None,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """
         将 HTML 转为 Markdown，包含正文提取和预清理。
 
@@ -228,13 +317,16 @@ class NewsMarkdownConverter:
         2. 定位正文容器（article / main / 常见 class）
         3. decompose 非正文标签（script/style/nav 等及其内容）
         4. markdownify 转换
+
+        Returns:
+            (markdown_text, scoped) — scoped 为 True 表示已定位正文容器
         """
         try:
             soup = BeautifulSoup(html, "html.parser")
             site_key = _detect_site_key(source, url)
 
             # 1. 尝试定位正文容器，缩小转换范围
-            body = self._find_content_root(
+            body, scoped = self._find_content_root(
                 soup,
                 site_key=site_key,
                 content_selector=content_selector,
@@ -254,7 +346,7 @@ class NewsMarkdownConverter:
                 heading_style="ATX",
                 wrap=False,
             )
-            return self._sanitize_markdown(markdown_text, site_key=site_key)
+            return self._sanitize_markdown(markdown_text, site_key=site_key), scoped
 
         except Exception as e:
             logger.warning(f"markdownify 转换异常，回退到纯文本提取: {e}")
@@ -270,9 +362,91 @@ class NewsMarkdownConverter:
                 return self._sanitize_markdown(
                     soup.get_text(separator="\n"),
                     site_key=site_key,
-                )
+                ), False
             except Exception:
-                return ""
+                return "", False
+
+    def _html_to_markdown_with_trafilatura(
+        self,
+        html: str,
+        site_key: str = "",
+        content_selector: str | None = None,
+        noise_selectors: list[str] | None = None,
+    ) -> tuple[str, bool]:
+        """使用 trafilatura 提取正文 Markdown，作为 markdownify 结果的候选。
+
+        当提供 content_selector 时，先用 BeautifulSoup 定位正文容器并清理
+        噪音，再将缩小后的 HTML 交给 trafilatura，避免在短页面中把导航/推荐
+        文本也算进去。
+
+        Returns:
+            (markdown_text, scoped) — scoped 为 True 表示已定位正文容器
+        """
+        scoped = False
+        target_html = html
+        try:
+            if content_selector or site_key:
+                soup = BeautifulSoup(html, "html.parser")
+                body, scoped = self._find_content_root(
+                    soup,
+                    site_key=site_key,
+                    content_selector=content_selector,
+                )
+                if scoped:
+                    self._remove_noise_elements(
+                        body,
+                        site_key=site_key,
+                        noise_selectors=noise_selectors,
+                    )
+                    target_html = str(body)
+        except Exception as e:
+            logger.debug(f"trafilatura 预处理正文容器失败，使用全页: {e}")
+            scoped = False
+            target_html = html
+
+        try:
+            extracted = trafilatura.extract(
+                target_html,
+                output_format="markdown",
+                include_comments=False,
+                include_tables=True,
+            )
+        except Exception as e:
+            logger.debug(f"trafilatura Markdown 提取失败: {e}")
+            extracted = None
+        return self._sanitize_markdown(extracted or "", site_key=site_key), scoped
+
+    def _html_to_text_markdown(
+        self,
+        html: str,
+        site_key: str = "",
+        content_selector: str | None = None,
+        noise_selectors: list[str] | None = None,
+    ) -> tuple[str, bool]:
+        """从清理后的 HTML 提取纯文本，作为最后的正文候选。
+
+        Returns:
+            (markdown_text, scoped) — scoped 为 True 表示已定位正文容器
+        """
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            body, scoped = self._find_content_root(
+                soup,
+                site_key=site_key,
+                content_selector=content_selector,
+            )
+            self._remove_noise_elements(
+                body,
+                site_key=site_key,
+                noise_selectors=noise_selectors,
+            )
+            return self._sanitize_markdown(
+                body.get_text(separator="\n"),
+                site_key=site_key,
+            ), scoped
+        except Exception as e:
+            logger.debug(f"BeautifulSoup 文本提取失败: {e}")
+            return "", False
 
     @staticmethod
     def _find_content_root(
@@ -560,6 +734,114 @@ class NewsMarkdownConverter:
         return text.strip()
 
     @staticmethod
+    def _strip_front_matter(text: str) -> str:
+        """移除正文候选中意外混入的 YAML Front Matter。"""
+        return re.sub(r"\A\s*---\s*\n.*?\n---\s*", "", text, flags=re.DOTALL)
+
+    @staticmethod
+    def _strip_residual_noise(text: str) -> str:
+        """清理 HTML 转换后仍可能残留的分享、推荐和站点页脚行。"""
+        footer_match = _RESIDUAL_FOOTER_START_RE.search(text)
+        if footer_match:
+            text = text[:footer_match.start()]
+
+        lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if _RESIDUAL_NOISE_LINE_RE.search(stripped):
+                continue
+            if stripped in {"推荐阅读", "相关阅读", "相关文章", "猜你喜欢"}:
+                continue
+            if stripped in {"[Share]", "[Tweet]", "Share", "Tweet"}:
+                continue
+            lines.append(line)
+        return "\n".join(lines)
+
+    def _normalize_article_markdown(self, text: str, title: str = "") -> str:
+        """统一文章 Markdown：唯一 H1 标题 + 清理残留噪音 + 保持正文结构。"""
+        title = (title or "").strip() or "Untitled"
+        text = self._strip_front_matter(text or "")
+        text = self._strip_residual_noise(text)
+        text = self._sanitize_markdown(text)
+        body = self._normalize_heading_levels(text, title)
+        body = self._sanitize_markdown(body)
+        if body:
+            return f"# {title}\n\n{body}".strip()
+        return f"# {title}"
+
+    @staticmethod
+    def _normalize_heading_levels(text: str, title: str) -> str:
+        """把正文内部 H1 降为 H2，并移除与文章标题重复的首个 H1。"""
+        if not text:
+            return ""
+
+        normalized_title = _normalize_heading_text(title)
+        seen_first_h1 = False
+        in_code = False
+        lines = []
+
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_code = not in_code
+                lines.append(line)
+                continue
+
+            if not in_code:
+                match = re.match(r"^#\s+(.+?)\s*$", stripped)
+                if match:
+                    heading_text = match.group(1).strip()
+                    if (
+                        not seen_first_h1
+                        and normalized_title
+                        and _normalize_heading_text(heading_text) == normalized_title
+                    ):
+                        seen_first_h1 = True
+                        continue
+                    seen_first_h1 = True
+                    lines.append(f"## {heading_text}")
+                    continue
+
+            lines.append(line)
+
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _score_markdown_quality(text: str, title: str = "") -> float:
+        """给正文候选打分：正文越完整、结构越清晰、噪音越少分越高。"""
+        if not text or not text.strip():
+            return -1_000.0
+
+        text = NewsMarkdownConverter._strip_front_matter(text)
+        stripped = text.strip()
+        visible_chars = len(re.sub(r"\s+", "", stripped))
+        cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", stripped))
+        latin_words = len(re.findall(r"[A-Za-z]{2,}", stripped))
+        headings = len(re.findall(r"(?m)^#{1,6}\s+", stripped))
+        paragraphs = len([p for p in re.split(r"\n{2,}", stripped) if p.strip()])
+        noise_hits = len(_HTML_OR_SCRIPT_NOISE_RE.findall(stripped))
+        markdown_links = len(re.findall(r"\[[^\]]+\]\([^)]+\)", stripped))
+        raw_links = len(re.findall(r"https?://", stripped))
+
+        title_bonus = 0
+        if title and _normalize_heading_text(title) in _normalize_heading_text(stripped):
+            title_bonus = 20
+
+        score = float(visible_chars)
+        score += min(cjk_chars + latin_words, 600) * 0.4
+        score += min(headings, 8) * 30
+        score += min(paragraphs, 20) * 8
+        score += title_bonus
+        score -= noise_hits * 250
+        score -= max(raw_links - markdown_links, 0) * 12
+
+        if visible_chars < 80:
+            score -= 300
+        if visible_chars < 20:
+            score -= 500
+        return score
+
+    @staticmethod
     def _generate_filename(article: Article) -> str:
         """
         生成安全的文件名：{source}_{title_slug}_{hash}.md
@@ -628,6 +910,13 @@ def _detect_site_key(source: str = "", url: str = "") -> str:
     if "thepaper.cn" in host or "澎湃" in source_lower or "thepaper" in source_lower:
         return "thepaper"
     return ""
+
+
+def _normalize_heading_text(text: str) -> str:
+    """Normalize heading/title text for duplicate detection."""
+    text = re.sub(r"\[[^\]]+\]\([^)]+\)", "", text or "")
+    text = re.sub(r"[*_`#>\[\]（）()\s:：|｜,，。.!！?？\"'“”‘’、-]+", "", text)
+    return text.lower()
 
 
 def _sanitize_thepaper_markdown(text: str) -> str:

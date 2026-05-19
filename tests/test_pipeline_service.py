@@ -14,6 +14,7 @@ class TestPipelineService:
     def store(self):
         store = MagicMock()
         store.save_articles.return_value = 1
+        store.save_parent_chunks.return_value = 1
         store.get_unembedded.return_value = [
             Article(
                 id=1,
@@ -127,3 +128,51 @@ class TestPipelineService:
         assert result["fetched"] == 0
         assert result["new"] == 0
         assert result["errors"] == []
+
+    def test_embed_with_chunks_writes_parents_before_embeddings_and_children(
+        self, store, mock_vector_store, mock_embedding_client, mock_chunking_service
+    ):
+        """父 chunks 应先于 embedding 和 child chunks 写入。"""
+        calls = []
+        store.save_parent_chunks.side_effect = lambda parents: calls.append("parents") or len(parents)
+        mock_embedding_client.embed = MagicMock(
+            side_effect=lambda texts: calls.append("embeddings") or [[0.1] * 1536 for _ in texts]
+        )
+        mock_vector_store.add_chunks.side_effect = (
+            lambda chunks, embeddings: calls.append("children") or len(chunks)
+        )
+
+        service = PipelineService(
+            collector=MagicMock(),
+            article_store=store,
+            vector_store=mock_vector_store,
+            embedding_client=mock_embedding_client,
+            chunking_service=mock_chunking_service,
+        )
+
+        result = {"chunks": 0, "parent_chunks": 0}
+        embedded = service._embed_with_chunks(store.get_unembedded.return_value, result)
+
+        assert embedded == 1
+        assert calls == ["parents", "embeddings", "children"]
+
+    def test_pipeline_does_not_mark_embedded_when_child_write_incomplete(
+        self, store, mock_collector, mock_embedding_client, mock_chunking_service
+    ):
+        """子 chunk 未完整写入时，不应把文章标记为 embedded。"""
+        vector_store = MagicMock()
+        vector_store.add_chunks.return_value = 0
+
+        service = PipelineService(
+            collector=mock_collector,
+            article_store=store,
+            vector_store=vector_store,
+            embedding_client=mock_embedding_client,
+            chunking_service=mock_chunking_service,
+        )
+
+        result = service.run()
+
+        assert result["embedded"] == 0
+        assert len(result["errors"]) == 1
+        store.mark_embedded.assert_not_called()

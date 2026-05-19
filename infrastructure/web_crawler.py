@@ -51,12 +51,30 @@ _THEPAPER_RULES = _CrawlerRules(
 )
 
 
+_BJNEWS_RULES = _CrawlerRules(
+    article_patterns=(
+        re.compile(r"https?://www\.bjnews\.com\.cn/detail/\d+\.html(?:\?.*)?$", re.I),
+    ),
+)
+
+
+_INFZM_RULES = _CrawlerRules(
+    article_patterns=(
+        re.compile(r"https?://www\.infzm\.com/contents/\d+(?:\?.*)?$", re.I),
+    ),
+)
+
+
 def _site_default_rules(site_name: str, site_url: str) -> _CrawlerRules:
     """Return built-in URL rules for known news sites."""
     host = urlparse(site_url).netloc.lower()
     name = site_name.lower()
     if "thepaper.cn" in host or "澎湃" in name or "thepaper" in name:
         return _THEPAPER_RULES
+    if "bjnews.com.cn" in host or "新京报" in name or "bjnews" in name:
+        return _BJNEWS_RULES
+    if "infzm.com" in host or "南方周末" in name or "infzm" in name:
+        return _INFZM_RULES
     return _CrawlerRules()
 
 
