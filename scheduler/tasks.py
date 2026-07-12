@@ -4,7 +4,11 @@ from uuid import uuid4
 from celery import shared_task
 
 from core.config_manager import get_config_manager
-from core.factory import create_document_ingestion_service
+from core.factory import (
+    create_document_clustering_service,
+    create_document_ingestion_service,
+    create_source_governance_service,
+)
 from core.source_config import load_feeds, load_sites
 from infrastructure.collector import NewsCollector
 from models.task_run import TaskStatus
@@ -118,6 +122,9 @@ def run_pipeline_task(self, manual=False, task_run_id=None):
             competitor_service=mgr.competitor_service,
             task_reporter=reporter,
             redis_state_store=mgr.redis_state_store,
+            source_governance_service=create_source_governance_service(config, mgr),
+            document_clustering_service=create_document_clustering_service(config),
+            source_governance_enabled=config.source_governance_enabled,
         )
         result = service.run()
 

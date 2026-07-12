@@ -1,7 +1,6 @@
 """Structured intel fact service."""
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import date, datetime
 from enum import Enum
@@ -17,8 +16,9 @@ from core.protocols import (
     StructuredExtractionClientProtocol,
 )
 from models.document import ParentDocumentChunk, SourceDocument
-from models.evidence import EvidenceOwnerType, EvidenceRef, EvidenceType
+from models.evidence import EvidenceOwnerType, EvidenceRef, EvidenceRole, EvidenceStance, EvidenceType
 from models.intel import FactKind, FactStatus, FactType, IntelDimension, IntelFact
+from services.evidence_verification_service import EvidenceVerificationService
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +26,7 @@ logger = structlog.get_logger(__name__)
 FACT_EXTRACTION_SYSTEM_PROMPT = """You extract auditable competitor intelligence facts.
 Return JSON object {"facts":[...]} only. Each fact must include fact_type, dimension,
 subject, predicate, object, fact_text, confidence_score, importance_score,
-source_reliability, and parent_chunk_ids. Use only provided parent chunks as evidence."""
+verification_status, and parent_chunk_ids. Use only provided parent chunks as evidence."""
 
 
 def _enum_value(value: Any) -> Any:
@@ -146,10 +146,7 @@ class IntelService:
                 extraction_version=extraction_version,
             )
             existing = self.intel_store.list_facts(
-                {
-                    "source_document_id": document_id,
-                    "dedupe_key": data["dedupe_key"],
-                },
+                {"assertion_key": data["assertion_key"]},
                 limit=1,
             )
             if existing:
@@ -182,7 +179,6 @@ class IntelService:
 
         fact = IntelFact(
             id=data.get("id") or data.get("fact_id") or IntelFact.__dataclass_fields__["id"].default_factory(),
-            source_document_id=data["source_document_id"],
             fact_kind=data.get("fact_kind", FactKind.FACT),
             fact_type=data.get("fact_type", FactType.GENERAL),
             dimension=data.get("dimension", IntelDimension.GENERAL),
@@ -195,10 +191,11 @@ class IntelService:
             observed_at=_safe_datetime(data.get("observed_at")),
             importance_score=_safe_float(data.get("importance_score")),
             confidence_score=_safe_float(data.get("confidence_score")),
-            source_reliability=_safe_float(data.get("source_reliability")),
+            verification_status=data.get("verification_status", "unverified"),
+            verification_reason=str(data.get("verification_reason", "")).strip(),
             extraction_method=str(data.get("extraction_method", "llm")),
             extraction_version=str(data.get("extraction_version", "")),
-            dedupe_key=data.get("dedupe_key") or self.build_dedupe_key(data),
+            assertion_key=data.get("assertion_key") or self.build_assertion_key(data),
             status=status,
             created_by=created_by,
         )
@@ -239,7 +236,6 @@ class IntelService:
             return None
         merged = {
             "id": current.id,
-            "source_document_id": data.get("source_document_id", current.source_document_id),
             "fact_kind": data.get("fact_kind", current.fact_kind),
             "fact_type": data.get("fact_type", current.fact_type),
             "dimension": data.get("dimension", current.dimension),
@@ -252,10 +248,11 @@ class IntelService:
             "observed_at": data.get("observed_at", current.observed_at),
             "importance_score": data.get("importance_score", current.importance_score),
             "confidence_score": data.get("confidence_score", current.confidence_score),
-            "source_reliability": data.get("source_reliability", current.source_reliability),
+            "verification_status": data.get("verification_status", current.verification_status),
+            "verification_reason": data.get("verification_reason", current.verification_reason),
             "extraction_method": data.get("extraction_method", current.extraction_method),
             "extraction_version": data.get("extraction_version", current.extraction_version),
-            "dedupe_key": data.get("dedupe_key", current.dedupe_key),
+            "assertion_key": data.get("assertion_key", current.assertion_key),
             "status": data.get("status", current.status),
             "created_by": current.created_by,
         }
@@ -336,6 +333,8 @@ class IntelService:
             owner_type=owner_type,
             owner_id=owner_id,
             source_document_id=evidence_data.get("source_document_id"),
+            document_version_id=evidence_data.get("document_version_id"),
+            source_occurrence_id=evidence_data.get("source_occurrence_id"),
             parent_chunk_id=evidence_data.get("parent_chunk_id"),
             url=evidence_data.get("url", ""),
             title=evidence_data.get("title", ""),
@@ -343,24 +342,30 @@ class IntelService:
             quote_hash=evidence_data.get("quote_hash", ""),
             evidence_type=evidence_data.get("evidence_type", EvidenceType.SOURCE_CHUNK),
             relevance_score=_safe_float(evidence_data.get("relevance_score"), 1.0),
+            role=evidence_data.get("role", EvidenceRole.UNKNOWN),
+            stance=evidence_data.get("stance", EvidenceStance.SUPPORTS),
+            source_tier=evidence_data.get("source_tier", "unknown"),
+            source_kind=evidence_data.get("source_kind", "other"),
+            role_overridden=bool(evidence_data.get("role_overridden", False)),
+            override_reason=evidence_data.get("override_reason", ""),
+            override_actor=evidence_data.get("override_actor", ""),
         )
         self._validate_evidence(evidence)
         if owner_type != EvidenceOwnerType.INTEL_FACT.value:
             raise ValueError("IntelService only attaches intel_fact evidence")
-        return self.intel_store.save_evidence(evidence)
+        saved = self.intel_store.save_evidence(evidence)
+        fact = self.intel_store.get_fact(owner_id)
+        if fact:
+            refs = self.intel_store.list_evidence(owner_type, owner_id)
+            status, reason = EvidenceVerificationService().derive_status(fact, refs)
+            fact.verification_status = status
+            fact.verification_reason = reason
+            self.intel_store.save_fact(fact)
+        return saved
 
     @staticmethod
-    def build_dedupe_key(data: dict) -> str:
-        parts = [
-            data.get("source_document_id", ""),
-            _enum_value(data.get("fact_type", FactType.GENERAL)),
-            data.get("subject", ""),
-            data.get("predicate", ""),
-            data.get("object", ""),
-            data.get("event_date", ""),
-        ]
-        normalized = "|".join(_normalize_text(part) for part in parts)
-        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    def build_assertion_key(data: dict) -> str:
+        return EvidenceVerificationService.assertion_key(data)
 
     def _build_extraction_message(
         self,
@@ -401,7 +406,6 @@ class IntelService:
     ) -> dict:
         event_date = item.get("event_date")
         fact_data = {
-            "source_document_id": document.document_id,
             "fact_kind": item.get("fact_kind", FactKind.FACT.value),
             "fact_type": item.get("fact_type", FactType.GENERAL.value),
             "dimension": item.get("dimension", IntelDimension.GENERAL.value),
@@ -414,14 +418,14 @@ class IntelService:
             "observed_at": item.get("observed_at"),
             "importance_score": item.get("importance_score", 0.0),
             "confidence_score": item.get("confidence_score", 0.0),
-            "source_reliability": item.get("source_reliability", 0.0),
+            "verification_status": item.get("verification_status", "unverified"),
             "extraction_method": "llm",
             "extraction_version": extraction_version,
             "status": FactStatus.DRAFT.value,
             "competitor_ids": item.get("competitor_ids") or [],
             "product_ids": item.get("product_ids") or [],
         }
-        fact_data["dedupe_key"] = self.build_dedupe_key(fact_data)
+        fact_data["assertion_key"] = self.build_assertion_key(fact_data)
         fact_data["evidence"] = [
             {
                 "source_document_id": document.document_id,
@@ -459,7 +463,6 @@ class IntelService:
         evidence = self.intel_store.list_evidence(EvidenceOwnerType.INTEL_FACT.value, fact.id)
         return {
             "id": fact.id,
-            "source_document_id": fact.source_document_id,
             "fact_kind": _enum_value(fact.fact_kind),
             "fact_type": _enum_value(fact.fact_type),
             "dimension": _enum_value(fact.dimension),
@@ -472,10 +475,11 @@ class IntelService:
             "observed_at": fact.observed_at.isoformat() if fact.observed_at else None,
             "importance_score": fact.importance_score,
             "confidence_score": fact.confidence_score,
-            "source_reliability": fact.source_reliability,
+            "verification_status": _enum_value(fact.verification_status),
+            "verification_reason": fact.verification_reason,
             "extraction_method": fact.extraction_method,
             "extraction_version": fact.extraction_version,
-            "dedupe_key": fact.dedupe_key,
+            "assertion_key": fact.assertion_key,
             "status": _enum_value(fact.status),
             "created_by": fact.created_by,
             "competitor_ids": fact.competitor_ids,
@@ -525,6 +529,13 @@ class IntelService:
         }
 
     def _validate_evidence(self, evidence: EvidenceRef) -> None:
+        role = _enum_value(evidence.role)
+        if evidence.source_kind == "community" and role == EvidenceRole.PRIMARY.value:
+            raise ValueError("community source cannot be primary evidence")
+        if evidence.source_kind == "aggregator" and role == EvidenceRole.INDEPENDENT.value:
+            raise ValueError("aggregator source cannot be independent evidence")
+        if evidence.role_overridden and not evidence.override_reason.strip():
+            raise ValueError("manual evidence role override requires a reason")
         if evidence.parent_chunk_id:
             chunks = self.document_store.get_parent_chunks_by_ids([evidence.parent_chunk_id])
             if not chunks:

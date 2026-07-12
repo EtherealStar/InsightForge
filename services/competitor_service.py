@@ -206,13 +206,18 @@ class CompetitorService:
         if not competitors:
             return {"linked": 0, "facts_processed": 0}
 
-        filters: dict[str, Any] = {}
-        if document_ids and len(document_ids) == 1:
-            filters["source_document_id"] = document_ids[0]
-        facts = self.intel_store.list_facts(filters, limit=1000)
-        if document_ids and len(document_ids) > 1:
+        facts = self.intel_store.list_facts({}, limit=1000)
+        if document_ids:
             doc_ids = set(document_ids)
-            facts = [fact for fact in facts if fact.source_document_id in doc_ids]
+            # Fact 已是全局对象，按来源筛选必须通过证据关系完成。
+            facts = [
+                fact
+                for fact in facts
+                if any(
+                    evidence.source_document_id in doc_ids
+                    for evidence in self.intel_store.list_evidence("intel_fact", fact.id)
+                )
+            ]
 
         linked = 0
         for fact in facts:

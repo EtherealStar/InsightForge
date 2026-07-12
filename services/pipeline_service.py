@@ -5,8 +5,8 @@ Qdrant vectorization -> structured intel facts -> fact links.
 """
 from __future__ import annotations
 
-import hashlib
 from typing import Any, TYPE_CHECKING
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import NAMESPACE_URL, uuid5
 
 import structlog
@@ -17,13 +17,16 @@ from core.protocols import (
     RedisStateStoreProtocol,
     VectorIndexProtocol,
 )
+from models.document_governance import DedupDecision
 from infrastructure.collector import NewsCollector
 from infrastructure.markdown_converter import NewsMarkdownConverter
+from services.document_fingerprint_service import fingerprint
 
 if TYPE_CHECKING:
     from infrastructure.chunking_service import ChunkingService
     from infrastructure.web_crawler import WebCrawler
     from models.document import SourceDocument
+    from services.document_clustering_service import DocumentClusteringService
     from services.task_run_reporter import TaskRunReporter
 
 logger = structlog.get_logger(__name__)
@@ -47,6 +50,9 @@ class PipelineService:
         competitor_service: Any | None = None,
         task_reporter: "TaskRunReporter | None" = None,
         redis_state_store: RedisStateStoreProtocol | None = None,
+        source_governance_service: Any | None = None,
+        document_clustering_service: "DocumentClusteringService | None" = None,
+        source_governance_enabled: bool = False,
     ):
         self.collector = collector
         self.document_store = document_store
@@ -61,6 +67,9 @@ class PipelineService:
         self.competitor_service = competitor_service
         self.task_reporter = task_reporter
         self.redis_state_store = redis_state_store
+        self.source_governance_service = source_governance_service
+        self.document_clustering_service = document_clustering_service
+        self.source_governance_enabled = source_governance_enabled
 
     def run(self) -> dict:
         result = {
@@ -77,6 +86,10 @@ class PipelineService:
             "intel_linked": 0,
             "skipped_non_articles": 0,
             "errors": [],
+            "quarantined": 0,
+            "pending_review": 0,
+            "duplicates": 0,
+            "duplicate_candidates": 0,
         }
 
         stage = self._start_stage("collect")
@@ -94,6 +107,7 @@ class PipelineService:
             try:
                 articles = self.md_converter.convert_batch(articles)
                 articles, skipped = self._filter_indexable_articles(articles)
+                articles = self._apply_source_admission(articles, result)
                 result["skipped_non_articles"] += skipped
                 self._finish_stage(
                     stage,
@@ -111,7 +125,7 @@ class PipelineService:
         if articles:
             stage = self._start_stage("store_source_documents", {"articles": len(articles)})
             try:
-                documents = [self._article_to_document(article) for article in articles]
+                documents = self._prepare_documents(articles, result)
                 for document in documents:
                     self.document_store.save_document(document)
                 result["new"] = len(documents)
@@ -333,12 +347,69 @@ class PipelineService:
         result["fact_extract_failed"] = failed
         return {"created": created, "updated": updated, "skipped": skipped, "failed": failed}
 
+    def _prepare_documents(self, articles: list, result: dict) -> list["SourceDocument"]:
+        if not self.document_clustering_service:
+            raise RuntimeError("DocumentClusteringService 未配置，禁止回退到 URL 文档身份")
+
+        documents = []
+        for article in articles:
+            occurrence = self._article_to_occurrence(article)
+            # 只有 PostgreSQL 已提交的权威结果可以决定是否启动昂贵的派生数据构建。
+            committed = self.document_clustering_service.commit(occurrence)
+            if committed.requires_build or committed.decision is DedupDecision.NEW_CLUSTER:
+                documents.append(
+                    self._article_to_document(
+                        article,
+                        document_id=committed.occurrence.document_id,
+                    )
+                )
+            elif committed.decision in {DedupDecision.DUPLICATE, DedupDecision.UNCHANGED}:
+                result["duplicates"] += 1
+            elif committed.decision is DedupDecision.REVIEW_REQUIRED:
+                result["duplicate_candidates"] += 1
+            elif committed.decision is DedupDecision.QUARANTINED:
+                result["quarantined"] += 1
+            elif committed.decision is DedupDecision.CANONICAL_PROMOTED:
+                raise RuntimeError("canonical_promoted 必须交由 DocumentVersionService 构建")
+            else:
+                raise ValueError(f"未支持的去重决定: {committed.decision}")
+        return documents
+
+    def _article_to_occurrence(self, article):
+        from models.document_governance import SourceOccurrence
+
+        content_hash, simhash, _ = fingerprint(article.content or "")
+        admission = getattr(article, "_source_admission", None)
+        profile = admission.profile if admission else None
+        return SourceOccurrence(
+            document_id="",
+            url=article.url or "",
+            normalized_url=self._normalize_url(article.url or ""),
+            title=article.title or "Untitled",
+            content_hash=content_hash,
+            simhash=simhash,
+            source_profile_revision_id=getattr(profile, "revision_id", None),
+            source_tier=getattr(getattr(profile, "tier", None), "value", "unknown"),
+            source_kind=getattr(getattr(profile, "source_kind", None), "value", "other"),
+        )
+
     @staticmethod
-    def _article_to_document(article):
+    def _normalize_url(url: str) -> str:
+        parts = urlsplit(url.strip())
+        query = urlencode(
+            sorted(
+                (key, value)
+                for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                if not key.lower().startswith("utm_")
+            )
+        )
+        path = parts.path.rstrip("/") or "/"
+        return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, query, ""))
+
+    @staticmethod
+    def _article_to_document(article, document_id: str):
         from models.document import SourceDocument
 
-        source_key = article.url or f"{article.source}:{article.title}"
-        document_id = str(uuid5(NAMESPACE_URL, source_key))
         content = article.content or ""
         return SourceDocument(
             document_id=document_id,
@@ -349,7 +420,7 @@ class PipelineService:
             url=article.url or "",
             canonical_url=article.url or "",
             language=getattr(article.language, "value", article.language) or "",
-            content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            content_hash=fingerprint(content)[0],
             metadata={
                 "source": article.source or "",
                 "author": article.author or "",
@@ -362,6 +433,24 @@ class PipelineService:
             published_at=article.published_at,
             parse_status="parsed",
         )
+
+    def _apply_source_admission(self, articles: list, result: dict) -> list:
+        if not self.source_governance_enabled:
+            return articles
+        if not self.source_governance_service:
+            raise RuntimeError("已启用来源治理，但 SourceGovernanceService 未配置")
+        admitted = []
+        for article in articles:
+            outcome = self.source_governance_service.admit(article.url or "")
+            if outcome.decision == "admit":
+                # 准入时快照随 occurrence 固化，后续来源重新评级不能改写历史。
+                article._source_admission = outcome
+                admitted.append(article)
+            elif outcome.decision == "quarantine":
+                result["quarantined"] += 1
+            else:
+                result["pending_review"] += 1
+        return admitted
 
     @staticmethod
     def _filter_indexable_articles(articles: list) -> tuple[list, int]:
@@ -393,7 +482,16 @@ class PipelineService:
             self.task_reporter.event(event_type, payload)
 
     def fetch_and_store(self) -> dict:
-        result = {"fetched": 0, "new": 0, "skipped_non_articles": 0, "errors": []}
+        result = {
+            "fetched": 0,
+            "new": 0,
+            "skipped_non_articles": 0,
+            "quarantined": 0,
+            "pending_review": 0,
+            "duplicates": 0,
+            "duplicate_candidates": 0,
+            "errors": [],
+        }
         articles, collect_errors = self._collect_all()
         result["fetched"] = len(articles)
         result["errors"].extend(collect_errors)
@@ -402,15 +500,17 @@ class PipelineService:
         try:
             articles = self.md_converter.convert_batch(articles)
             articles, skipped = self._filter_indexable_articles(articles)
+            articles = self._apply_source_admission(articles, result)
             result["skipped_non_articles"] += skipped
         except Exception as exc:
             msg = f"Markdown 转换阶段失败: {exc}"
             logger.error("[FetchOnly] %s", msg)
             result["errors"].append(msg)
         try:
-            for article in articles:
-                self.document_store.save_document(self._article_to_document(article))
-            result["new"] = len(articles)
+            documents = self._prepare_documents(articles, result)
+            for document in documents:
+                self.document_store.save_document(document)
+            result["new"] = len(documents)
         except Exception as exc:
             msg = f"存储阶段失败: {exc}"
             logger.error("[FetchOnly] %s", msg)
