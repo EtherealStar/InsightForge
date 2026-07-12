@@ -5,6 +5,45 @@ description = "Logos 个人 AI 新闻分析助手 — Demo 原型"
 requires-python = ">=3.11"
 readme = "README.md"
 license = {text = "MIT"}
+dependencies = [
+    "anthropic>=0.25.0",
+    "celery[redis]>=5.3.0",
+    "colorama>=0.4.6",
+    "crawlee[beautifulsoup]>=1.6.0",
+    "ddgs>=9.0.0",
+    "fastapi>=0.110.0",
+    "feedparser>=6.0.0",
+    "google-genai>=1.0.0",
+    "jieba>=0.42.1",
+    "markdownify>=0.14.1",
+    "openai>=1.30.0",
+    "psycopg2-binary>=2.9.9",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.9",
+    "pyyaml>=6.0",
+    "qdrant-client>=1.9.0",
+    "redis>=5.0.0",
+    "requests>=2.31.0",
+    "structlog>=24.1.0",
+    "tavily-python>=0.5.0",
+    "tiktoken>=0.7.0",
+    "trafilatura>=1.8.0",
+    "uvicorn[standard]>=0.29.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+eval = [
+    "datasets>=2.0.0",
+    "langchain-core>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "ragas>=0.4.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

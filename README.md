@@ -12,12 +12,8 @@
 ### 1. 环境准备
 
 ```bash
-# 创建并激活 Python 虚拟环境
-python -m venv .venv
-.venv\Scripts\activate    # Windows
-
-# 安装 Python 后端依赖
-pip install -r requirements.txt
+# 同步锁定的 Python 运行与开发依赖（自动创建项目内 .venv）
+uv sync
 
 # 配置环境变量
 copy .env.example .env
@@ -51,16 +47,16 @@ start_dev.bat
 docker compose up -d
 
 # 终端 1 — FastAPI 后端 (:8005)
-python -m delivery.server
+uv run python -m delivery.server
 
 # 终端 2 — Vue 前端 (:5173)
 cd frontend && pnpm dev
 
 # 终端 3 — Celery Worker
-celery -A scheduler.celery_app worker -l info -P threads
+uv run celery -A scheduler.celery_app worker -l info -P threads
 
 # 终端 4 — Celery Beat
-celery -A scheduler.celery_app beat -l info
+uv run celery -A scheduler.celery_app beat -l info
 
 ```
 
@@ -68,7 +64,7 @@ celery -A scheduler.celery_app beat -l info
 
 ```bash
 cd frontend && pnpm build && cd ..
-python -m delivery.server
+uv run python -m delivery.server
 # 生产环境下仍需独立启动 Celery Worker 和 Beat
 ```
 
@@ -91,10 +87,14 @@ docker compose -f docker-compose.prod.yml run --rm web python -m delivery.cli au
 ### 4. CLI 调试工具
 
 ```bash
-python -m delivery.cli pipeline        # 手动执行 Pipeline
-python -m delivery.cli ask "Cursor 和 Windsurf 有什么区别？"
-python -m delivery.cli auth create-key --name analyst --role analyst
+uv run python -m delivery.cli pipeline        # 手动执行 Pipeline
+uv run python -m delivery.cli ask "Cursor 和 Windsurf 有什么区别？"
+uv run python -m delivery.cli auth create-key --name analyst --role analyst
 ```
+
+### Python 依赖管理
+
+`pyproject.toml` 和提交到仓库的 `uv.lock` 是 Python 依赖的唯一来源。修改依赖后，运行 `uv lock`，再以 `uv sync` 同步环境。评估套件依赖保持隔离，按需使用 `uv sync --group eval` 或 `uv run --group eval <command>`；生产 Docker 镜像不会安装该组。
 
 ## 前端功能
 
@@ -141,7 +141,7 @@ Logos/
 - **任务**: Celery + Redis (分布式异步 + Beat 定时)
 - **日志**: structlog (结构化 JSON)
 - **容器**: Docker Compose (VPS 生产编排 + 本地基础设施)
-- **包管理**: pnpm（前端）/ pip（后端）
+- **包管理**: pnpm（前端）/ uv（后端）
 
 ## 文档
 

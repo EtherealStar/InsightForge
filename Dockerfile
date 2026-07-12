@@ -15,9 +15,12 @@ RUN pnpm build
 
 FROM python:3.12-slim AS runtime
 
+COPY --from=ghcr.io/astral-sh/uv:0.11.17 /uv /uvx /bin/
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
@@ -25,8 +28,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt pyproject.toml README.md ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --no-group eval
 
 COPY agent/ ./agent/
 COPY core/ ./core/
