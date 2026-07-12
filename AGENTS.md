@@ -124,3 +124,17 @@ python -m delivery.cli ask "Cursor 和 Windsurf 有什么区别？"
 - 异常继承 `NewsAssistantError` 层次
 - 外部调用加 `@with_retry` 装饰器
 - 使用 `structlog.get_logger()` 获取 logger
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as local Markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The default five canonical triage labels are used. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context domain documentation layout. See `docs/agents/domain.md`.

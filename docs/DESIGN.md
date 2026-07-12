@@ -42,3 +42,4 @@ Frontend → Delivery → Agent/Tools → Services → Infrastructure
 - [Protocol 接口契约](design-docs/protocol-contracts.md) — 核心接口的详细设计
 - [ReAct Agent 设计](design-docs/react-agent.md) — Agent 推理循环与工具系统
 - [架构变更历史](design-docs/changelog.md) — 所有重大架构变更记录
+- [来源治理与近重复检测](design-docs/source-governance-and-deduplication.md) — 来源分级、SimHash 去重、主来源晋升与证据验证目标设计

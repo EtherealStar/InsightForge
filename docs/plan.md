@@ -21,6 +21,7 @@
 | [phase-3-enterprise-report-quality-security-plan.md](exec-plans/completed/phase-3-enterprise-report-quality-security-plan.md) | Phase 3 企业级报告生成、质量门禁、安全、配置与生产部署增强计划 |
 | [phase-4-frontend-workbench-upgrade-plan.md](exec-plans/phase-4-frontend-workbench-upgrade-plan.md) | Phase 4 前端工作台升级重构计划，覆盖 Dashboard、Intel、Reports、Tasks 和 SVG-only 图标规范 |
 | [news-brief-to-intel-report-migration.md](exec-plans/news-brief-to-intel-report-migration.md) | Phase 0 命名迁移基线：News/Brief 到 Intel/Report 的兼容边界和后续迁移策略 |
+| [source-governance-and-deduplication-implementation-plan.md](exec-plans/source-governance-and-deduplication-implementation-plan.md) | 来源分级、SimHash + shingle 两阶段去重、主来源晋升、全局 fact、多证据验证与治理工作台实施计划 |
 
 ### 近期优先
 

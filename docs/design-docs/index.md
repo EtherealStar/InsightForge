@@ -13,3 +13,4 @@
 | [react-agent.md](react-agent.md) | ReAct Agent 循环、工具系统、内置工具、工具链 | ARCHITECTURE.md §13 |
 | [changelog.md](changelog.md) | 架构变更历史记录（含 RAGAs 评估框架） | ARCHITECTURE.md 顶部 |
 | [api-routes.md](api-routes.md) | API 路由表、前端页面映射、SSE 通信约定 | ARCHITECTURE.md §6 |
+| [source-governance-and-deduplication.md](source-governance-and-deduplication.md) | 来源分级、SimHash 近重复检测、主来源晋升与多证据验证目标设计 | 2026-07-12 设计讨论 |
