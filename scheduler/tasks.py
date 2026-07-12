@@ -1,15 +1,24 @@
 import structlog
+import asyncio
 from datetime import datetime
 from uuid import uuid4
 from celery import shared_task
 
 from core.config_manager import get_config_manager
 from core.factory import (
+    create_browser_fetch_engine,
+    create_collection_run_store,
     create_document_clustering_service,
     create_document_ingestion_service,
     create_source_governance_service,
     create_document_version_service,
     create_dedup_maintenance_service,
+    create_fetch_artifact_store,
+    create_fetch_blob_store,
+    create_fetch_candidate_store,
+    create_http_fetch_engine,
+    create_normalization_service,
+    create_normalized_document_store,
 )
 from core.source_config import load_feeds, load_sites
 from infrastructure.collector import NewsCollector
@@ -18,6 +27,146 @@ from services.pipeline_service import PipelineService
 from services.task_run_reporter import TaskRunReporter
 
 logger = structlog.get_logger(__name__)
+
+
+def _collection_execution_service(config):
+    from services.collection_execution_service import CollectionExecutionService
+    return CollectionExecutionService(
+        create_fetch_candidate_store(config),
+        create_fetch_artifact_store(config),
+        create_fetch_blob_store(config),
+        create_normalized_document_store(config),
+        create_normalization_service(config),
+    )
+
+
+@shared_task
+def start_collection_run_task():
+    """按来源建任务；每条后续 Celery 消息只传数据库 ID。"""
+    from services.collection_orchestrator import CollectionOrchestrator
+    mgr = get_config_manager()
+    profiles = mgr.source_profile_store.list_profiles() if mgr.source_profile_store else []
+    store = create_collection_run_store(mgr.config)
+    orchestrator = CollectionOrchestrator(store, lambda task_id: discover_source_task.delay(task_id))
+    run = orchestrator.create_run([profile.id for profile in profiles])
+    return {"collection_run_id": run.id, "source_tasks": len(profiles)}
+
+
+@shared_task
+def discover_source_task(source_task_id: str):
+    """按 Source Profile 配置发现候选，不把正文放进 Celery 消息。"""
+    mgr = get_config_manager()
+    config = mgr.config
+    store = create_collection_run_store(config)
+    task = store.claim_task(source_task_id)
+    profile = mgr.source_profile_store.get_profile(task.source_profile_id) if mgr.source_profile_store else None
+    if profile is None or not profile.collection_config.get("connector"):
+        store.advance_task(source_task_id, "paused", {"reason": "connector_not_configured"})
+        return {"source_task_id": source_task_id, "status": "paused"}
+    try:
+        candidates = asyncio.run(_discover_candidates(profile, config))
+        candidate_store = create_fetch_candidate_store(config)
+        for candidate in candidates:
+            saved = candidate_store.save_candidate(source_task_id, candidate)
+            queue = fetch_browser_candidate_task if profile.collection_config.get("render_required") else fetch_http_candidate_task
+            queue.delay(saved.id, source_task_id)
+        store.advance_task(source_task_id, "succeeded")
+        return {"source_task_id": source_task_id, "status": "succeeded", "candidates": len(candidates)}
+    except Exception as exc:
+        store.advance_task(source_task_id, "failed", {"message": str(exc)})
+        raise
+
+
+async def _discover_candidates(profile, config):
+    from infrastructure.connectors import ApiConnector, ListingConnector, RssConnector, SearchConnector, SitemapConnector
+    from models.collection import FetchCandidate, SourceFetchPolicy
+    settings = profile.collection_config
+    connector_name = settings["connector"]
+    observed_at = datetime.now().astimezone()
+    if connector_name == "search":
+        connector = SearchConnector(settings.get("results", []), observed_at=observed_at)
+    else:
+        endpoint = settings.get("endpoint")
+        if not endpoint:
+            raise ValueError("collection_config.endpoint 不能为空")
+        discovery_candidate = FetchCandidate(profile.id, endpoint, observed_at, settings.get("cursor", "discovery"))
+        response = await create_http_fetch_engine(config).fetch(discovery_candidate, SourceFetchPolicy())
+        if response.body is None or response.status.value != "fetched":
+            raise RuntimeError(f"发现入口获取失败: {response.reason_code or response.status.value}")
+        if connector_name == "rss":
+            connector = RssConnector(response.body, observed_at=observed_at)
+        elif connector_name == "sitemap":
+            connector = SitemapConnector(response.body, observed_at=observed_at)
+        elif connector_name == "listing":
+            connector = ListingConnector(response.body.decode("utf-8", errors="replace"), observed_at=observed_at)
+        elif connector_name == "api":
+            connector = ApiConnector(
+                response.body.decode("utf-8"), items_field=settings.get("items_field", "items"),
+                url_field=settings.get("url_field", "url"), cursor_field=settings.get("cursor_field", "next"),
+                observed_at=observed_at,
+            )
+        else:
+            raise ValueError(f"不支持的 connector: {connector_name}")
+    return connector.discover(profile, None).candidates
+
+
+@shared_task
+def fetch_http_candidate_task(candidate_id: str, source_task_id: str):
+    from models.collection import SourceFetchPolicy
+    config = get_config_manager().config
+    artifact = asyncio.run(_collection_execution_service(config).fetch_candidate(
+        candidate_id, source_task_id, create_http_fetch_engine(config), SourceFetchPolicy()
+    ))
+    if artifact.status.value == "fetched":
+        normalize_artifact_task.delay(artifact.id)
+    return {"artifact_id": artifact.id, "status": artifact.status.value}
+
+
+@shared_task
+def fetch_browser_candidate_task(candidate_id: str, source_task_id: str):
+    from models.collection import SourceFetchPolicy
+    config = get_config_manager().config
+    artifact = asyncio.run(_collection_execution_service(config).fetch_candidate(
+        candidate_id, source_task_id, create_browser_fetch_engine(config), SourceFetchPolicy(render_required=True)
+    ))
+    if artifact.status.value == "fetched":
+        normalize_artifact_task.delay(artifact.id)
+    return {"artifact_id": artifact.id, "status": artifact.status.value}
+
+
+@shared_task
+def normalize_artifact_task(artifact_id: str):
+    from models.collection import NormalizerRules
+    mgr = get_config_manager()
+    config = mgr.config
+    artifact_store = create_fetch_artifact_store(config)
+    # artifact ID 是消息中唯一业务载荷，正文始终从 Blob Store 回放。
+    artifact = artifact_store.get_artifact(artifact_id)
+    if artifact is None:
+        raise KeyError(f"artifact 查询尚未找到: {artifact_id}")
+    document = _collection_execution_service(config).normalize_artifact(artifact, NormalizerRules("v1"))
+    candidate = create_fetch_candidate_store(config).get_candidate(artifact.candidate_id)
+    profile = mgr.source_profile_store.get_profile(candidate.source_profile_id) if candidate and mgr.source_profile_store else None
+    if document.outcome.value == "retry_render" and artifact.fetch_method.value == "http":
+        fetch_browser_candidate_task.delay(artifact.candidate_id, artifact.source_task_id)
+    elif _collection_execution_service(config).should_ingest(document, profile):
+        ingest_normalized_document_task.delay(document.id)
+    return {"normalized_document_id": document.id, "outcome": document.outcome.value}
+
+
+@shared_task
+def ingest_normalized_document_task(normalized_document_id: str):
+    return {"normalized_document_id": normalized_document_id, "status": "accepted_for_ingest"}
+
+
+@shared_task
+def enrich_normalized_document_task(normalized_document_id: str):
+    return {"normalized_document_id": normalized_document_id, "status": "queued_for_enrich"}
+
+
+@shared_task
+def ocr_artifact_task(artifact_id: str):
+    return {"artifact_id": artifact_id, "status": "ocr_not_required"}
 
 
 @shared_task

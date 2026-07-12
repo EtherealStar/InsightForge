@@ -343,25 +343,9 @@ def create_fact_evidence(fact_id: str, body: EvidenceRefInput):
 def run_intel_pipeline():
     """Run the intel ingestion pipeline asynchronously."""
     try:
-        from scheduler.tasks import run_pipeline_task
+        from scheduler.tasks import start_collection_run_task
 
-        mgr = get_config_manager()
-        run = mgr.task_run_store.create_run(
-            "intel_pipeline",
-            {"manual": True, "trigger": "api"},
-        )
-        try:
-            task = run_pipeline_task.apply_async(
-                kwargs={"manual": True, "task_run_id": run.id},
-                task_id=run.id,
-            )
-        except Exception as enqueue_error:
-            mgr.task_run_store.finish_run(
-                run.id,
-                "failed",
-                error={"message": str(enqueue_error), "stage": "enqueue"},
-            )
-            raise
+        task = start_collection_run_task.delay()
         return {"status": "ok", "task_id": task.id, "message": "情报采集任务已开始"}
     except Exception as exc:
         logger.exception("intel_api.pipeline_failed", error=str(exc))

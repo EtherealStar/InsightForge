@@ -10,13 +10,13 @@
 
 ## Progress
 
-- [ ] （2026-07-13）完成现状盘点、接口和数据库迁移设计。
-- [ ] 实现 Collection Run、Source Fetch Task、Fetch Candidate 和 artifact 模型及 Store。
-- [ ] 实现 RSS、Sitemap、Listing、API、Search Connector 与 HTTP/Browser Fetch Engine。
-- [ ] 实现来源级限速、条件请求、队列隔离、reconciler 和 Redis 降级。
-- [ ] 实现 Normalize、Content Block、版本化规则和四态门禁。
-- [ ] 接入 `ingest`/`enrich` 边界，删除旧 Crawlee/全局 Pipeline 运行路径。
-- [ ] 完成固定夹具、集成、故障恢复、容量和可观测性验收。
+- [x] （2026-07-13）完成现状盘点、窄 Protocol 和 `014_collection_normalization.sql` 数据库迁移设计。
+- [x] （2026-07-13）实现 Collection Run、Source Fetch Task、Fetch Candidate、artifact、Normalized Document 和 Content Block 模型及 PostgreSQL/Blob Store。
+- [x] （2026-07-13）实现 RSS、Sitemap、Listing、API、Search Connector 与 HTTP/Browser Fetch Engine；HTTP 聚焦测试覆盖 304、大小限制和阻断页。
+- [ ] （2026-07-13）部分实现来源级限速、条件请求、队列隔离、reconciler 和 Redis 降级（已完成保守进程内 limiter、六队列路由和 PostgreSQL fan-in；剩余 Redis 分布式 token bucket、动态升降并发和恢复演练）。
+- [x] （2026-07-13）实现无网络 Normalize、稳定 Content Block ID、版本化规则和四态门禁。
+- [ ] （2026-07-13）部分接入 `ingest`/`enrich` 边界（已完成 accepted 且 A/B/C 来源才发 ingest 消息；剩余实际知识入库适配器及删除旧兼容 Pipeline 函数）。
+- [ ] （2026-07-13）部分完成固定夹具、集成、故障恢复、容量和可观察性验收（已有四态脱敏 fixture；尚未执行 PostgreSQL/Redis/worker、容量和 Prometheus 验收）。
 
 ## Surprises & Discoveries
 
@@ -26,6 +26,10 @@
   Evidence: `docs/adr/0004-versioned-deterministic-normalization.md` 的 Consequences 和设计文档第 7 节。
 - Observation: Redis 只能提供可重建的加速与协调，Collection Run 的 fan-in 必须读取 PostgreSQL 状态机。
   Evidence: `docs/design-docs/collection-and-normalization.md` 第 3、9、10 节。
+- Observation: 现有 `core.retry.with_retry` 原先只包装同步函数，无法捕获异步 `httpx` 请求抛出的异常。
+  Evidence: 已增加 coroutine 分支；`test_fetch_engine.py` 与旧 `test_tools.py` 合跑 69 passed。
+- Observation: 当前工作树缺少测试引用的 `evals/` 实现，且 embedding mock 与既有 `http_client` 参数不兼容，导致全量测试存在与本计划无关的基线失败。
+  Evidence: 全量结果 299 passed、32 failed、53 skipped；其中 25 个为 `evals.*` ModuleNotFoundError，1 个为既有 embedding mock TypeError，事件循环相关 7 个本次诱发失败已修复并复测通过。
 
 ## Decision Log
 
@@ -44,7 +48,7 @@
 
 ## Outcomes & Retrospective
 
-实现完成时记录：实际迁移编号、夹具数量、各 outcome 分布、静态成功率、browser fallback 比例、100 来源/10,000 candidate 负载结果、Redis 清空恢复结果，以及仍未实现的治理功能。若某项指标未执行，明确写为未执行，不写“预计通过”。
+截至 2026-07-13，基础领域、发现、HTTP 获取、artifact、确定性清洗和 Celery 队列边界已经落地，但真实基础设施端到端和容量演练尚未完成。本次不能宣称完整生产切换：旧 Pipeline 兼容函数仍存在，discover 来源配置和实际 ingest adapter 仍需完成。静态成功率、browser fallback、100 来源/10,000 candidate、Redis 清空恢复均未执行。
 
 ## Context and Orientation
 
@@ -157,6 +161,19 @@ PostgreSQL 迁移前备份并通过 `migrations/apply_migrations.py` 执行。ar
     redis rebuild: <恢复候选/索引数量>
     recovery drill: <worker interruption / redis loss / reconciler result>
 
+当前证据（2026-07-13）：
+
+    migration: 014_collection_normalization.sql
+    focused tests: 71 passed, 5 skipped in 5.49s（采集新测试 + 既有工具/迁移回归）
+    fixture outcomes: accepted=1, retry_render=1, review_required=1, rejected=1（文件已加入；尚未作为参数化 fixture suite 执行）
+    full suite: 299 passed, 32 failed, 53 skipped in 21.59s（失败基线见 Surprises & Discoveries）
+    static fetch success: 未执行
+    browser fallback: 未执行
+    redis rebuild: 未执行
+    recovery drill: 未执行；`docker info` 在 24.1s 后超时，本机 Docker daemon 不可用
+
+变更说明（2026-07-13）：执行 Milestone 1-5 的基础切片并更新真实进度；未通过基础设施验收的项目保持未完成，避免把代码骨架误记为可观察的生产结果。
+
 ## Interfaces and Dependencies
 
 最终 `core/protocols.py` 应提供以下最小职责接口，实际分页和事务参数可按现有 Store 风格扩展，但不能合并成宽泛的 Pipeline 接口：
@@ -199,4 +216,3 @@ PostgreSQL 迁移前备份并通过 `migrations/apply_migrations.py` 执行。ar
 在 `docs/design-docs/protocol-contracts.md` 搜索 `DocumentStoreProtocol`、`UploadStoreProtocol`、`Protocol`、`PostgreSQL 权威` 可对齐现有 Store 风格；在 `docs/adr/0003-source-fanout-fetch-architecture.md` 搜索 `Considered Options`、`直接移除 Crawlee`、`队列`；在 `docs/adr/0004-versioned-deterministic-normalization.md` 搜索 `Content Block`、`版本化`、`四种`、`Evidence Reference`；在 `docs/design-docs/structured-intelligence-model.md` 搜索 `Evidence Reference`、`Source Occurrence`、`Document Version` 以确认下游证据引用不变量。
 
 在 `docs/design-docs/tech-decisions.md` 搜索 `Celery`、`Redis`、`PostgreSQL`、`Playwright`、`trafilatura` 和 `httpx` 可快速核对基础设施选型理由。统一英文领域术语则搜索 `CONTEXT.md` 中的 `Collection Run`、`Fetch Candidate`、`Normalized Document`、`Content Block` 和 `Source Occurrence`。
-

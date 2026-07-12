@@ -41,6 +41,7 @@ class SourceProfile:
     tier: SourceTier = SourceTier.UNKNOWN
     source_kind: SourceKind = SourceKind.OTHER
     inherit_to_subdomains: bool = False
+    collection_config: dict = field(default_factory=dict)
     id: str = field(default_factory=lambda: str(uuid4()))
     revision_id: str | None = None
     created_at: datetime | None = None
