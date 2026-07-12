@@ -24,11 +24,19 @@ app.conf.update(
     timezone="Asia/Shanghai",
     enable_utc=True,
     beat_schedule={
-        "pipeline-beat": {
-            "task": "scheduler.tasks.run_pipeline_task",
+        "collection-beat": {
+            "task": "scheduler.tasks.start_collection_run_task",
             "schedule": crontab(minute="*/5"),  # 每5分钟检查一次是否需要执行
         },
-    }
+    },
+    task_routes={
+        "scheduler.tasks.fetch_http_candidate_task": {"queue": "fetch.http"},
+        "scheduler.tasks.fetch_browser_candidate_task": {"queue": "fetch.browser"},
+        "scheduler.tasks.normalize_artifact_task": {"queue": "normalize"},
+        "scheduler.tasks.ingest_normalized_document_task": {"queue": "ingest"},
+        "scheduler.tasks.enrich_normalized_document_task": {"queue": "enrich"},
+        "scheduler.tasks.ocr_artifact_task": {"queue": "ocr"},
+    },
 )
 
 @celery_setup_logging.connect

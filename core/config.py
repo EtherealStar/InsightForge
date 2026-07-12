@@ -55,6 +55,7 @@ class AppConfig(BaseSettings):
     # --- 存储 ---
     pg_dsn: str = "postgresql://postgres:postgres@localhost:5432/logos"
     markdown_output_path: str = "data/markdown"
+    fetch_blob_path: str = "data/fetch-artifacts"
     output_path: str = "output"
 
     # --- 上传文件基础设施 ---

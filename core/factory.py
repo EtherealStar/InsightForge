@@ -139,6 +139,51 @@ def create_source_profile_store(config: AppConfig):
     return PostgresSourceProfileStore(dsn=config.pg_dsn)
 
 
+def create_collection_run_store(config: AppConfig):
+    from infrastructure.collection_store import PostgresCollectionRunStore
+    return PostgresCollectionRunStore(config.pg_dsn)
+
+
+def create_fetch_candidate_store(config: AppConfig):
+    from infrastructure.collection_store import PostgresFetchCandidateStore
+    return PostgresFetchCandidateStore(config.pg_dsn)
+
+
+def create_fetch_artifact_store(config: AppConfig):
+    from infrastructure.collection_store import PostgresFetchArtifactStore
+    return PostgresFetchArtifactStore(config.pg_dsn)
+
+
+def create_normalized_document_store(config: AppConfig):
+    from infrastructure.collection_store import PostgresNormalizedDocumentStore
+    return PostgresNormalizedDocumentStore(config.pg_dsn)
+
+
+def create_fetch_blob_store(config: AppConfig):
+    from infrastructure.fetch_blob_store import FileFetchBlobStore
+    return FileFetchBlobStore(config.fetch_blob_path)
+
+
+def create_source_rate_limiter(config: AppConfig, redis_state_store=None):
+    from infrastructure.source_rate_limiter import ConservativeSourceRateLimiter
+    return ConservativeSourceRateLimiter(redis_state_store)
+
+
+def create_http_fetch_engine(config: AppConfig):
+    from infrastructure.fetch_engines import HttpFetchEngine
+    return HttpFetchEngine()
+
+
+def create_browser_fetch_engine(config: AppConfig):
+    from infrastructure.fetch_engines import BrowserFetchEngine
+    return BrowserFetchEngine()
+
+
+def create_normalization_service(config: AppConfig):
+    from services.normalization_service import DeterministicNormalizationService
+    return DeterministicNormalizationService()
+
+
 def create_document_dedup_store(config: AppConfig):
     from infrastructure.document_dedup_store import PostgresDocumentDedupStore
 

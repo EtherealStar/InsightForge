@@ -31,6 +31,12 @@ class PostgresSourceProfileStore:
             row = cur.fetchone()
         return self._profile(row) if row else None
 
+    def get_profile(self, profile_id: str) -> SourceProfile | None:
+        with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(self._list_sql("WHERE profile.id=%s"), (profile_id,))
+            row = cur.fetchone()
+        return self._profile(row) if row else None
+
     def list_profiles(self, *, tier: str | None = None) -> list[SourceProfile]:
         with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             if tier:
@@ -42,12 +48,13 @@ class PostgresSourceProfileStore:
     def save_profile(self, profile: SourceProfile, *, actor: str, reason: str) -> SourceProfile:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO source_profiles (id, domain, tier, source_kind, inherit_to_subdomains)
-                   VALUES (%s,%s,%s,%s,%s)
+                """INSERT INTO source_profiles (id, domain, tier, source_kind, inherit_to_subdomains, collection_config)
+                   VALUES (%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (domain) DO UPDATE SET tier=EXCLUDED.tier, source_kind=EXCLUDED.source_kind,
-                   inherit_to_subdomains=EXCLUDED.inherit_to_subdomains, updated_at=NOW()
+                   inherit_to_subdomains=EXCLUDED.inherit_to_subdomains, collection_config=EXCLUDED.collection_config, updated_at=NOW()
                    RETURNING id""",
-                (profile.id, profile.domain, profile.tier.value, profile.source_kind.value, profile.inherit_to_subdomains),
+                (profile.id, profile.domain, profile.tier.value, profile.source_kind.value, profile.inherit_to_subdomains,
+                 psycopg2.extras.Json(profile.collection_config)),
             )
             profile.id = cur.fetchone()[0]
             cur.execute(
@@ -75,4 +82,4 @@ class PostgresSourceProfileStore:
 
     @staticmethod
     def _profile(row):
-        return SourceProfile(domain=row["domain"], tier=SourceTier(row["tier"]), source_kind=SourceKind(row["source_kind"]), inherit_to_subdomains=row["inherit_to_subdomains"], id=row["id"], revision_id=row.get("revision_id"), created_at=row.get("created_at"), updated_at=row.get("updated_at"))
+        return SourceProfile(domain=row["domain"], tier=SourceTier(row["tier"]), source_kind=SourceKind(row["source_kind"]), inherit_to_subdomains=row["inherit_to_subdomains"], collection_config=row.get("collection_config") or {}, id=row["id"], revision_id=row.get("revision_id"), created_at=row.get("created_at"), updated_at=row.get("updated_at"))
