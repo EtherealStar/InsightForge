@@ -46,8 +46,22 @@ const labels = {
   fact: {
     draft: '草稿',
     active: '有效',
+    superseded: '已取代',
+    retracted: '已撤回',
     rejected: '已拒绝',
     archived: '已归档',
+    single_source: '单一来源',
+    self_reported: '主体自述',
+    corroborated: '多源印证',
+    disputed: '存在反证',
+  },
+  claim: {
+    draft: '草稿',
+    hypothesis: '假设',
+    supported: '已支持',
+    needs_review: '待复核',
+    disputed: '存在争议',
+    superseded: '已取代',
   },
 }
 

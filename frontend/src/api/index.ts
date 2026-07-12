@@ -134,6 +134,33 @@ export const intelApi = {
   runPipeline: () => api.post('/intel/pipeline'),
 }
 
+// ========== 三层结构化情报（v2） ==========
+export const intelligenceV2Api = {
+  listFacts: (params?: any) => api.get('/v2/intel/facts', { params }),
+  getFact: (id: string) => api.get(`/v2/intel/facts/${id}`),
+  createFact: (data: any, createdBy = 'user') =>
+    api.post(`/v2/intel/facts?created_by=${encodeURIComponent(createdBy)}`, data),
+  activateFact: (id: string) => api.post(`/v2/intel/facts/${id}/activate`),
+  retractFact: (id: string, reason: string) =>
+    api.post(`/v2/intel/facts/${id}/retract?reason=${encodeURIComponent(reason)}`),
+  supersedeFact: (oldFactId: string, newFact: any) =>
+    api.post('/v2/intel/facts/supersede', { old_fact_id: oldFactId, new_fact: newFact }),
+  splitFact: (payload: any) => api.post('/v2/intel/facts/split', payload),
+  linkFactEvidence: (factId: string, evidenceRefId: string, stance = 'supports') =>
+    api.post(`/v2/intel/facts/${factId}/evidence`, { evidence_ref_id: evidenceRefId, stance }),
+  linkSubject: (factId: string, payload: any) =>
+    api.post(`/v2/intel/facts/${factId}/subjects`, payload),
+  createEvidence: (payload: any) => api.post('/v2/intel/evidence', payload),
+  listClaims: (params?: any) => api.get('/v2/intel/claims', { params }),
+  getClaim: (id: string) => api.get(`/v2/intel/claims/${id}`),
+  createClaim: (payload: any, createdBy = 'agent') =>
+    api.post(`/v2/intel/claims?created_by=${encodeURIComponent(createdBy)}`, payload),
+  approveClaim: (id: string, approvedBy: string) =>
+    api.post(`/v2/intel/claims/${id}/approve`, { approved_by: approvedBy }),
+  replaceClaimFacts: (id: string, links: any[]) =>
+    api.post(`/v2/intel/claims/${id}/facts`, { links }),
+}
+
 // ========== 来源治理 ==========
 export const governanceApi = {
   listSources: (tier?: string) => api.get('/governance/sources', { params: tier ? { tier } : undefined }),

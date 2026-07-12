@@ -24,6 +24,12 @@ const routes = [
     meta: { title: '结构化情报', icon: 'intel' },
   },
   {
+    path: '/intel/v2',
+    name: 'IntelV2',
+    component: () => import('../views/ClaimWorkbench.vue'),
+    meta: { title: '三层结构化情报', icon: 'intel' },
+  },
+  {
     path: '/governance',
     name: 'Governance',
     component: () => import('../views/GovernanceView.vue'),
