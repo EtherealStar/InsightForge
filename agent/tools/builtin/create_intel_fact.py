@@ -22,7 +22,6 @@ class CreateIntelFactTool(BaseTool):
     @property
     def parameters(self) -> list[ToolParameter]:
         return [
-            ToolParameter("source_document_id", "string", "来源文档 ID"),
             ToolParameter("fact_kind", "string", "fact/event/signal", required=False, default="fact"),
             ToolParameter("fact_type", "string", "事实类型", required=False, default="general"),
             ToolParameter("dimension", "string", "分析维度", required=False, default="general"),
@@ -46,7 +45,6 @@ class CreateIntelFactTool(BaseTool):
         if not parent_chunk_id and not url:
             raise ValueError("create_intel_fact requires parent_chunk_id or url evidence")
         data = {
-            "source_document_id": kwargs["source_document_id"],
             "fact_kind": kwargs.get("fact_kind") or "fact",
             "fact_type": kwargs.get("fact_type") or "general",
             "dimension": kwargs.get("dimension") or "general",
@@ -62,7 +60,6 @@ class CreateIntelFactTool(BaseTool):
             "product_ids": kwargs.get("product_ids") or [],
             "evidence": [
                 {
-                    "source_document_id": kwargs["source_document_id"],
                     "parent_chunk_id": parent_chunk_id or None,
                     "url": url,
                     "snippet": kwargs["evidence_snippet"],

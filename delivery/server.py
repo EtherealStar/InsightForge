@@ -28,6 +28,7 @@ from delivery.api.competitor_router import router as competitor_router
 from delivery.api.report_router import router as report_router
 from delivery.api.intel_router import router as intel_router
 from delivery.api.insight_router import router as insight_router
+from delivery.api.governance_router import router as governance_router
 
 app = FastAPI(
     title="InsightForge — AI 竞品分析助手",
@@ -87,23 +88,9 @@ app.include_router(competitor_router)
 app.include_router(report_router)
 app.include_router(intel_router)
 app.include_router(insight_router)
+app.include_router(governance_router)
 
-# 生产模式：挂载 Vue 构建产物
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-if os.path.exists(_STATIC_DIR):
-    # SPA 路由回退：所有非 /api 的请求返回 index.html
-    from fastapi.responses import FileResponse
-
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        # 优先返回静态文件
-        file_path = os.path.join(_STATIC_DIR, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        # 其他路径返回 index.html（SPA 路由）
-        return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
-
-    app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
 
 
 @app.on_event("startup")
@@ -157,9 +144,12 @@ def health():
 
     try:
         store = mgr.document_store
-        with store._conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
+        if hasattr(store, "healthcheck"):
+            store.healthcheck()
+        else:
+            with store._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
         checks["postgres"]["status"] = "ok"
     except Exception as exc:
         checks["postgres"] = {"status": "unhealthy", "error": str(exc)}
@@ -190,6 +180,20 @@ def health():
         "message": "InsightForge 后端运行中",
         "checks": checks,
     }
+
+
+# 生产模式：挂载 Vue 构建产物。必须放在所有 /api 路由之后。
+if os.path.exists(_STATIC_DIR):
+    from fastapi.responses import FileResponse
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        file_path = os.path.join(_STATIC_DIR, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
+
+    app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
 
 
 def main():

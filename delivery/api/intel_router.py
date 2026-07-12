@@ -20,6 +20,8 @@ class EvidenceRefInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_document_id: str | None = None
+    document_version_id: str | None = None
+    source_occurrence_id: str | None = None
     parent_chunk_id: str | None = None
     url: str = ""
     title: str = ""
@@ -27,12 +29,18 @@ class EvidenceRefInput(BaseModel):
     quote_hash: str = ""
     evidence_type: str = "source_chunk"
     relevance_score: float = 1.0
+    role: str = "unknown"
+    stance: str = "supports"
+    source_tier: str = "unknown"
+    source_kind: str = "other"
+    role_overridden: bool = False
+    override_reason: str = ""
+    override_actor: str = ""
 
 
 class IntelFactCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_document_id: str
     fact_kind: str = "fact"
     fact_type: str = "general"
     dimension: str = "general"
@@ -45,10 +53,11 @@ class IntelFactCreate(BaseModel):
     observed_at: datetime | None = None
     importance_score: float = 0.0
     confidence_score: float = 0.0
-    source_reliability: float = 0.0
     extraction_method: str = "manual"
     extraction_version: str = ""
-    dedupe_key: str = ""
+    assertion_key: str = ""
+    verification_status: str = "unverified"
+    verification_reason: str = ""
     status: str = "draft"
     competitor_ids: list[int] = Field(default_factory=list)
     product_ids: list[int] = Field(default_factory=list)
@@ -114,7 +123,6 @@ def _filters(
     fact_type: str | None,
     dimension: str | None,
     status: str | None,
-    source_document_id: str | None,
     competitor_id: int | None,
     competitor_ids: list[int] | None,
     product_id: int | None,
@@ -130,8 +138,6 @@ def _filters(
         filters["dimension"] = dimension
     if status:
         filters["status"] = status
-    if source_document_id:
-        filters["source_document_id"] = source_document_id
     if competitor_id is not None:
         filters["competitor_id"] = competitor_id
     if competitor_ids:
@@ -154,7 +160,6 @@ def list_facts(
     fact_type: str | None = None,
     dimension: str | None = None,
     status: str | None = None,
-    source_document_id: str | None = None,
     competitor_id: int | None = None,
     competitor_ids: list[int] | None = Query(default=None),
     product_id: int | None = None,
@@ -171,7 +176,6 @@ def list_facts(
             fact_type,
             dimension,
             status,
-            source_document_id,
             competitor_id,
             competitor_ids,
             product_id,

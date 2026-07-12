@@ -111,7 +111,6 @@ def _fact_to_dict(fact) -> dict:
     return _serialize(
         {
             "id": fact.id,
-            "source_document_id": fact.source_document_id,
             "fact_kind": fact.fact_kind,
             "fact_type": fact.fact_type,
             "dimension": fact.dimension,
@@ -124,7 +123,9 @@ def _fact_to_dict(fact) -> dict:
             "observed_at": fact.observed_at,
             "importance_score": fact.importance_score,
             "confidence_score": fact.confidence_score,
-            "source_reliability": fact.source_reliability,
+            "assertion_key": fact.assertion_key,
+            "verification_status": getattr(fact.verification_status, "value", fact.verification_status),
+            "verification_reason": fact.verification_reason,
             "status": fact.status,
             "competitor_ids": fact.competitor_ids,
             "product_ids": fact.product_ids,

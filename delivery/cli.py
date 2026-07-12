@@ -32,6 +32,9 @@ def cmd_pipeline(config: AppConfig) -> None:
     chunking_service = create_chunking_service(config)
     collector = NewsCollector(config)
 
+    from core.factory import create_document_clustering_service, create_source_profile_store
+    from services.source_governance_service import SourceGovernanceService
+
     service = PipelineService(
         collector,
         document_store,
@@ -39,6 +42,9 @@ def cmd_pipeline(config: AppConfig) -> None:
         embedding_client,
         chunking_service=chunking_service,
         markdown_output_path=config.markdown_output_path,
+        source_governance_service=SourceGovernanceService(create_source_profile_store(config)),
+        document_clustering_service=create_document_clustering_service(config),
+        source_governance_enabled=config.source_governance_enabled,
     )
     result = service.run()
     print("\nPipeline 完成:")
