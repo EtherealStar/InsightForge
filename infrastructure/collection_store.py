@@ -11,11 +11,13 @@ from models.collection import (
     ContentBlock,
     FetchMethod,
     FetchCandidate,
+    CandidateStatus,
     NormalizationOutcome,
     NormalizedDocument,
     RawFetchArtifact,
     SourceFetchTask,
     SourceTaskStatus,
+    SourceCursor,
 )
 
 
@@ -93,6 +95,29 @@ class PostgresCollectionRunStore(_PostgresStore):
         from services.collection_orchestrator import summarize_run
         return self.finish_run(run_id, summarize_run(self.list_tasks(run_id)))
 
+    def list_active_run_ids(self) -> list[str]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT id FROM collection_runs WHERE status IN ('pending','running') ORDER BY created_at")
+            return [str(row[0]) for row in cur.fetchall()]
+
+    def collection_metrics(self) -> dict[str, int]:
+        queries = {
+            "runs_running": "SELECT COUNT(*) FROM collection_runs WHERE status='running'",
+            "candidates_discovered": "SELECT COUNT(*) FROM fetch_candidates",
+            "artifacts_fetched": "SELECT COUNT(*) FROM raw_fetch_artifacts WHERE status='fetched'",
+            "documents_normalized": "SELECT COUNT(*) FROM normalized_documents",
+            "documents_accepted": "SELECT COUNT(*) FROM normalized_documents WHERE outcome='accepted'",
+            "browser_artifacts": "SELECT COUNT(*) FROM raw_fetch_artifacts WHERE fetch_method='browser'",
+            "blocked_artifacts": "SELECT COUNT(*) FROM raw_fetch_artifacts WHERE status='blocked'",
+            "not_modified_artifacts": "SELECT COUNT(*) FROM raw_fetch_artifacts WHERE status='not_modified'",
+        }
+        with self._conn() as conn, conn.cursor() as cur:
+            result = {}
+            for name, query in queries.items():
+                cur.execute(query)
+                result[name] = int(cur.fetchone()[0])
+            return result
+
     @staticmethod
     def _task(row) -> SourceFetchTask:
         return SourceFetchTask(str(row["collection_run_id"]), str(row["source_profile_id"]), SourceTaskStatus(row["status"]), row["attempt"], row["error"], str(row["id"]), row["created_at"], row["updated_at"])
@@ -106,7 +131,8 @@ class PostgresFetchArtifactStore(_PostgresStore):
                    (id,candidate_id,source_task_id,request_url,final_url,fetch_method,status,http_status,content_type,
                     body_hash,blob_path,headers,retained,retention_reason,expires_at,reason_code,observed_at)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT DO UPDATE SET observed_at=EXCLUDED.observed_at, status=EXCLUDED.status,
+                   ON CONFLICT (candidate_id, fetch_method, (COALESCE(body_hash, ''))) DO UPDATE
+                   SET observed_at=EXCLUDED.observed_at, status=EXCLUDED.status,
                    http_status=EXCLUDED.http_status, content_type=EXCLUDED.content_type, blob_path=EXCLUDED.blob_path,
                    headers=EXCLUDED.headers, expires_at=EXCLUDED.expires_at, reason_code=EXCLUDED.reason_code
                    RETURNING id""",
@@ -129,6 +155,18 @@ class PostgresFetchArtifactStore(_PostgresStore):
             row = cur.fetchone()
         return self._artifact(row) if row else None
 
+    def latest_for_url(self, normalized_url: str) -> RawFetchArtifact | None:
+        with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT artifact.* FROM raw_fetch_artifacts artifact
+                   JOIN fetch_candidates candidate ON candidate.id=artifact.candidate_id
+                   WHERE candidate.normalized_url=%s
+                   ORDER BY artifact.observed_at DESC LIMIT 1""",
+                (normalized_url,),
+            )
+            row = cur.fetchone()
+        return self._artifact(row) if row else None
+
     def promote(self, artifact_id: str, reason: str) -> None:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute("UPDATE raw_fetch_artifacts SET retained=TRUE,retention_reason=%s,expires_at=NULL WHERE id=%s", (reason, artifact_id))
@@ -142,6 +180,18 @@ class PostgresFetchArtifactStore(_PostgresStore):
                 (before,),
             )
             return cur.rowcount
+
+    def list_expired_blob_paths(self, before, limit: int = 1000) -> list[str]:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT blob_path FROM raw_fetch_artifacts
+                   WHERE blob_path IS NOT NULL
+                   GROUP BY blob_path
+                   HAVING BOOL_AND(retained=FALSE AND expires_at<%s)
+                   ORDER BY MIN(expires_at) LIMIT %s""",
+                (before, limit),
+            )
+            return [row[0] for row in cur.fetchall()]
 
     @staticmethod
     def _artifact(row) -> RawFetchArtifact:
@@ -159,12 +209,13 @@ class PostgresFetchCandidateStore(_PostgresStore):
             cur.execute(
                 """INSERT INTO fetch_candidates
                    (id,source_task_id,source_profile_id,normalized_url,discovery_cursor,expected_media_type,
-                    canonical_url,idempotency_key,metadata,discovered_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    canonical_url,idempotency_key,metadata,status,discovered_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (idempotency_key) DO UPDATE SET discovered_at=EXCLUDED.discovered_at RETURNING id""",
                 (candidate.id, source_task_id, candidate.source_profile_id, candidate.normalized_url,
                  candidate.discovery_cursor, candidate.expected_media_type, candidate.canonical_url,
-                 candidate.idempotency_key, psycopg2.extras.Json(candidate.metadata), candidate.discovered_at),
+                 candidate.idempotency_key, psycopg2.extras.Json(candidate.metadata), candidate.status.value,
+                 candidate.discovered_at),
             )
             candidate.id = str(cur.fetchone()[0])
         return candidate
@@ -173,12 +224,65 @@ class PostgresFetchCandidateStore(_PostgresStore):
         with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT * FROM fetch_candidates WHERE id=%s", (candidate_id,))
             row = cur.fetchone()
-        if not row:
-            return None
+        return self._candidate(row) if row else None
+
+    def find_by_idempotency_key(self, idempotency_key: str) -> FetchCandidate | None:
+        with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM fetch_candidates WHERE idempotency_key=%s", (idempotency_key,))
+            row = cur.fetchone()
+        return self._candidate(row) if row else None
+
+    @staticmethod
+    def _candidate(row) -> FetchCandidate:
         return FetchCandidate(
             str(row["source_profile_id"]), row["normalized_url"], row["discovered_at"], row["discovery_cursor"],
-            row["expected_media_type"], row["canonical_url"], row["metadata"], str(row["id"]),
+            row["expected_media_type"], row["canonical_url"], row["metadata"], CandidateStatus(row["status"]), str(row["id"]),
         )
+
+    def advance_candidate(self, candidate_id: str, status: str) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE fetch_candidates SET status=%s WHERE id=%s", (status, candidate_id))
+
+    def task_candidates_terminal(self, source_task_id: str) -> bool:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT COUNT(*) FILTER (WHERE status NOT IN ('accepted','review_required','rejected','failed','unchanged')),
+                          COUNT(*) FROM fetch_candidates WHERE source_task_id=%s""",
+                (source_task_id,),
+            )
+            pending, total = cur.fetchone()
+        return total > 0 and pending == 0
+
+
+class PostgresSourceCursorStore(_PostgresStore):
+    def get_cursor(self, source_profile_id: str) -> SourceCursor | None:
+        with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM source_cursors WHERE source_profile_id=%s", (source_profile_id,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        return SourceCursor(
+            str(row["source_profile_id"]), row["cursor_value"], row["etag"], row["last_modified"],
+            row["next_due_at"], row["consecutive_unchanged"], row["consecutive_failures"],
+            row["circuit_open_until"], row["updated_at"],
+        )
+
+    def save_cursor(self, cursor: SourceCursor) -> SourceCursor:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO source_cursors
+                   (source_profile_id,cursor_value,etag,last_modified,next_due_at,consecutive_unchanged,
+                    consecutive_failures,circuit_open_until,updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (source_profile_id) DO UPDATE SET cursor_value=EXCLUDED.cursor_value,
+                   etag=EXCLUDED.etag,last_modified=EXCLUDED.last_modified,next_due_at=EXCLUDED.next_due_at,
+                   consecutive_unchanged=EXCLUDED.consecutive_unchanged,
+                   consecutive_failures=EXCLUDED.consecutive_failures,
+                   circuit_open_until=EXCLUDED.circuit_open_until,updated_at=EXCLUDED.updated_at""",
+                (cursor.source_profile_id, cursor.value, cursor.etag, cursor.last_modified, cursor.next_due_at,
+                 cursor.consecutive_unchanged, cursor.consecutive_failures, cursor.circuit_open_until, cursor.updated_at),
+            )
+        return cursor
 
 
 class PostgresNormalizedDocumentStore(_PostgresStore):

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS collection_runs (
 CREATE TABLE IF NOT EXISTS source_fetch_tasks (
     id UUID PRIMARY KEY,
     collection_run_id UUID NOT NULL REFERENCES collection_runs(id) ON DELETE CASCADE,
-    source_profile_id UUID NOT NULL REFERENCES source_profiles(id),
+    source_profile_id TEXT NOT NULL REFERENCES source_profiles(id),
     status TEXT NOT NULL CHECK (status IN ('pending','running','succeeded','failed','paused')),
     attempt INTEGER NOT NULL DEFAULT 0,
     error JSONB,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS source_fetch_tasks (
 );
 
 CREATE TABLE IF NOT EXISTS source_cursors (
-    source_profile_id UUID PRIMARY KEY REFERENCES source_profiles(id) ON DELETE CASCADE,
+    source_profile_id TEXT PRIMARY KEY REFERENCES source_profiles(id) ON DELETE CASCADE,
     cursor_value TEXT NOT NULL,
     etag TEXT,
     last_modified TEXT,
@@ -37,13 +37,16 @@ CREATE TABLE IF NOT EXISTS source_cursors (
 CREATE TABLE IF NOT EXISTS fetch_candidates (
     id UUID PRIMARY KEY,
     source_task_id UUID NOT NULL REFERENCES source_fetch_tasks(id) ON DELETE CASCADE,
-    source_profile_id UUID NOT NULL REFERENCES source_profiles(id),
+    source_profile_id TEXT NOT NULL REFERENCES source_profiles(id),
     normalized_url TEXT NOT NULL,
     discovery_cursor TEXT NOT NULL,
     expected_media_type TEXT,
     canonical_url TEXT,
     idempotency_key TEXT NOT NULL UNIQUE,
     metadata JSONB NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'discovered' CHECK (status IN (
+        'discovered','fetching','fetched','normalized','accepted','review_required','rejected','failed','unchanged'
+    )),
     discovered_at TIMESTAMPTZ NOT NULL
 );
 

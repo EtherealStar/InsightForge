@@ -20,7 +20,18 @@ class ConservativeSourceRateLimiter:
         now = time.monotonic()
         if self._cooldowns.get(source_profile_id, 0) > now:
             return False
-        if self.redis is not None and not self.redis.healthcheck() and (policy.render_required or policy.strict_rate_limit):
+        redis_healthy = self.redis is not None and self.redis.healthcheck()
+        if redis_healthy:
+            if self.redis.get_json(f"logos:cooldown:source:{source_profile_id}") is not None:
+                return False
+            if not self.redis.consume_token(
+                f"logos:rate:source:{source_profile_id}",
+                policy.requests_per_minute,
+                max(1, policy.requests_per_minute),
+                120,
+            ):
+                return False
+        elif self.redis is not None and (policy.render_required or policy.strict_rate_limit):
             return False
         with self._lock:
             if self._active[domain] >= policy.domain_concurrency:
@@ -41,3 +52,9 @@ class ConservativeSourceRateLimiter:
 
     def cool_down(self, source_profile_id: str, seconds: int, reason: str) -> None:
         self._cooldowns[source_profile_id] = time.monotonic() + seconds
+        if self.redis is not None and self.redis.healthcheck():
+            self.redis.set_json(
+                f"logos:cooldown:source:{source_profile_id}",
+                {"reason": reason},
+                ttl_seconds=seconds,
+            )

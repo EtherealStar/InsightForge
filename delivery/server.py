@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import FastAPI, Request
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uuid
@@ -182,6 +183,17 @@ def health():
         "message": "InsightForge 后端运行中",
         "checks": checks,
     }
+
+
+@app.get("/metrics", include_in_schema=False)
+def collection_metrics():
+    from core.config_manager import get_config_manager
+    from core.factory import create_collection_run_store
+    from services.collection_metrics_service import CollectionMetricsService
+
+    config = get_config_manager().config
+    content = CollectionMetricsService(create_collection_run_store(config)).render_prometheus()
+    return Response(content=content, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 # 生产模式：挂载 Vue 构建产物。必须放在所有 /api 路由之后。

@@ -15,7 +15,8 @@
 - [x] （2026-07-13）实现 RSS、Sitemap、Listing、API、Search Connector 与 HTTP/Browser Fetch Engine；HTTP 聚焦测试覆盖 304、大小限制和阻断页。
 - [ ] （2026-07-13）部分实现来源级限速、条件请求、队列隔离、reconciler 和 Redis 降级（已完成保守进程内 limiter、六队列路由和 PostgreSQL fan-in；剩余 Redis 分布式 token bucket、动态升降并发和恢复演练）。
 - [x] （2026-07-13）实现无网络 Normalize、稳定 Content Block ID、版本化规则和四态门禁。
-- [ ] （2026-07-13）部分接入 `ingest`/`enrich` 边界（已完成 accepted 且 A/B/C 来源才发 ingest 消息；剩余实际知识入库适配器及删除旧兼容 Pipeline 函数）。
+- [x] （2026-07-13）完成 `ingest`/`enrich` 边界：accepted 且 A/B/C 来源才发 ingest 消息，实际知识入库、向量化、事实抽取和竞品归因已由服务编排。
+- [ ] （2026-07-13）删除旧兼容 Pipeline 函数（当前仅保留未注册的迁移占位，待下一次清理提交移除）。
 - [ ] （2026-07-13）部分完成固定夹具、集成、故障恢复、容量和可观察性验收（已有四态脱敏 fixture；尚未执行 PostgreSQL/Redis/worker、容量和 Prometheus 验收）。
 
 ## Surprises & Discoveries
@@ -48,7 +49,7 @@
 
 ## Outcomes & Retrospective
 
-截至 2026-07-13，基础领域、发现、HTTP 获取、artifact、确定性清洗和 Celery 队列边界已经落地，但真实基础设施端到端和容量演练尚未完成。本次不能宣称完整生产切换：旧 Pipeline 兼容函数仍存在，discover 来源配置和实际 ingest adapter 仍需完成。静态成功率、browser fallback、100 来源/10,000 candidate、Redis 清空恢复均未执行。
+截至 2026-07-13，基础领域、发现、HTTP 获取、artifact、确定性清洗、Celery 队列边界和 accepted-only ingest 已落地。真实 PostgreSQL/Redis/worker 端到端和容量演练尚未完成；旧 Pipeline 函数只作为未注册迁移占位保留，后续应删除。静态成功率、browser fallback、100 来源/10,000 candidate、Redis 清空恢复均未执行。
 
 ## Context and Orientation
 
@@ -166,13 +167,16 @@ PostgreSQL 迁移前备份并通过 `migrations/apply_migrations.py` 执行。ar
     migration: 014_collection_normalization.sql
     focused tests: 71 passed, 5 skipped in 5.49s（采集新测试 + 既有工具/迁移回归）
     fixture outcomes: accepted=1, retry_render=1, review_required=1, rejected=1（文件已加入；尚未作为参数化 fixture suite 执行）
-    full suite: 299 passed, 32 failed, 53 skipped in 21.59s（失败基线见 Surprises & Discoveries）
+    focused execution-domain tests: 10 passed in 0.39s（collection admission/capacity/metrics/ingest/rate limiter）
+    full suite: 314 passed, 32 failed, 54 skipped（失败基线见 Surprises & Discoveries；失败集中在缺失 evals 模块、旧 embedding mock 约定及 Python 3.14 事件循环兼容）
     static fetch success: 未执行
     browser fallback: 未执行
     redis rebuild: 未执行
     recovery drill: 未执行
 
 变更说明（2026-07-13）：执行 Milestone 1-5 的基础切片并更新真实进度；未通过基础设施验收的项目保持未完成，避免把代码骨架误记为可观察的生产结果。
+
+变更说明（2026-07-13）：完成 accepted-only normalized ingest 与 enrich 实际服务调用，补充 focused test 和全量测试证据；由于全量失败均为既有基线问题，未扩大本次改动范围。
 
 ## Interfaces and Dependencies
 

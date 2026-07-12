@@ -149,6 +149,11 @@ def create_fetch_candidate_store(config: AppConfig):
     return PostgresFetchCandidateStore(config.pg_dsn)
 
 
+def create_source_cursor_store(config: AppConfig):
+    from infrastructure.collection_store import PostgresSourceCursorStore
+    return PostgresSourceCursorStore(config.pg_dsn)
+
+
 def create_fetch_artifact_store(config: AppConfig):
     from infrastructure.collection_store import PostgresFetchArtifactStore
     return PostgresFetchArtifactStore(config.pg_dsn)
@@ -182,6 +187,22 @@ def create_browser_fetch_engine(config: AppConfig):
 def create_normalization_service(config: AppConfig):
     from services.normalization_service import DeterministicNormalizationService
     return DeterministicNormalizationService()
+
+
+def create_normalized_ingestion_service(config: AppConfig, mgr):
+    from services.normalized_ingestion_service import NormalizedIngestionService
+    return NormalizedIngestionService(
+        create_normalized_document_store(config),
+        create_fetch_artifact_store(config),
+        create_fetch_candidate_store(config),
+        mgr.source_profile_store,
+        create_document_clustering_service(config),
+        create_document_version_service(config),
+        mgr.document_store,
+        mgr.chunking_service,
+        mgr.embedding_client,
+        mgr.vector_index,
+    )
 
 
 def create_document_dedup_store(config: AppConfig):

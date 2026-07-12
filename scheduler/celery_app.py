@@ -28,6 +28,14 @@ app.conf.update(
             "task": "scheduler.tasks.start_collection_run_task",
             "schedule": crontab(minute="*/5"),  # 每5分钟检查一次是否需要执行
         },
+        "collection-reconcile": {
+            "task": "scheduler.tasks.reconcile_collection_runs_task",
+            "schedule": 60.0,
+        },
+        "collection-artifact-cleanup": {
+            "task": "scheduler.tasks.cleanup_fetch_artifacts_task",
+            "schedule": crontab(minute=15, hour="*"),
+        },
     },
     task_routes={
         "scheduler.tasks.fetch_http_candidate_task": {"queue": "fetch.http"},

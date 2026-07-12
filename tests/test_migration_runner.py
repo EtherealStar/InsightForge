@@ -131,7 +131,7 @@ def test_first_run_applies_all_migrations(tmp_path):
         assert "source_profile_competitors" in tables
         ledger = _ledger(dsn)
         assert "011_three_layer_structured_intelligence_expand.sql" in ledger
-        assert len(ledger) == 10
+        assert set(ledger) == {path.name for path in MIGRATIONS_DIR.glob("*.sql")}
     finally:
         _drop_database(name)
 

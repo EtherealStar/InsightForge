@@ -17,6 +17,24 @@ else
 end
 """
 
+_TOKEN_BUCKET_SCRIPT = """
+local now = redis.call('TIME')
+local now_ms = now[1] * 1000 + math.floor(now[2] / 1000)
+local values = redis.call('HMGET', KEYS[1], 'tokens', 'updated_ms')
+local tokens = tonumber(values[1]) or tonumber(ARGV[2])
+local updated_ms = tonumber(values[2]) or now_ms
+local refill = math.max(0, now_ms - updated_ms) * tonumber(ARGV[1]) / 60000
+tokens = math.min(tonumber(ARGV[2]), tokens + refill)
+local allowed = 0
+if tokens >= 1 then
+    tokens = tokens - 1
+    allowed = 1
+end
+redis.call('HSET', KEYS[1], 'tokens', tokens, 'updated_ms', now_ms)
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+return allowed
+"""
+
 
 JsonValue = dict[str, Any] | list[Any] | str | int | float | bool | None
 
@@ -169,6 +187,30 @@ class RedisStateStore:
         except Exception as e:
             self._degrade("get_idempotency_key_failed", e, key=key)
             return None
+
+    def consume_token(
+        self,
+        key: str,
+        rate_per_minute: int,
+        capacity: int,
+        ttl_seconds: int,
+    ) -> bool:
+        if not self._redis:
+            return False
+        try:
+            return int(
+                self._redis.eval(
+                    _TOKEN_BUCKET_SCRIPT,
+                    1,
+                    key,
+                    max(1, rate_per_minute),
+                    max(1, capacity),
+                    max(1, ttl_seconds),
+                )
+            ) == 1
+        except Exception as e:
+            self._degrade("consume_token_failed", e, key=key)
+            return False
 
     @staticmethod
     def _task_key(run_id: str) -> str:

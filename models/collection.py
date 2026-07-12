@@ -41,6 +41,18 @@ class ArtifactStatus(str, Enum):
     FAILED = "failed"
 
 
+class CandidateStatus(str, Enum):
+    DISCOVERED = "discovered"
+    FETCHING = "fetching"
+    FETCHED = "fetched"
+    NORMALIZED = "normalized"
+    ACCEPTED = "accepted"
+    REVIEW_REQUIRED = "review_required"
+    REJECTED = "rejected"
+    FAILED = "failed"
+    UNCHANGED = "unchanged"
+
+
 class NormalizationOutcome(str, Enum):
     ACCEPTED = "accepted"
     RETRY_RENDER = "retry_render"
@@ -52,6 +64,12 @@ class NormalizationOutcome(str, Enum):
 class SourceCursor:
     source_profile_id: str
     value: str
+    etag: str | None = None
+    last_modified: str | None = None
+    next_due_at: datetime | None = None
+    consecutive_unchanged: int = 0
+    consecutive_failures: int = 0
+    circuit_open_until: datetime | None = None
     updated_at: datetime = field(default_factory=utcnow)
 
 
@@ -102,6 +120,7 @@ class FetchCandidate:
     expected_media_type: str | None = None
     canonical_url: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    status: CandidateStatus = CandidateStatus.DISCOVERED
     id: str = field(default_factory=lambda: str(uuid4()))
 
     @property
@@ -114,6 +133,7 @@ class FetchCandidate:
 class DiscoveryResult:
     candidates: list[FetchCandidate]
     next_cursor: SourceCursor | None = None
+    response_headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
