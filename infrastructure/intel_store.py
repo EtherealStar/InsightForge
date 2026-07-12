@@ -68,18 +68,17 @@ class PostgresIntelStore:
                 cur.execute(
                     """
                     INSERT INTO intel_facts (
-                        id, source_document_id, fact_kind, fact_type, dimension,
+                        id, fact_kind, fact_type, dimension,
                         subject, predicate, object, fact_text, attributes,
                         event_date, observed_at, importance_score, confidence_score,
-                        source_reliability, extraction_method, extraction_version,
-                        dedupe_key, status, created_by, created_at, updated_at
+                        extraction_method, extraction_version, assertion_key,
+                        verification_status, verification_reason, status, created_by, created_at, updated_at
                     )
                     VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (id) DO UPDATE SET
-                        source_document_id = EXCLUDED.source_document_id,
                         fact_kind = EXCLUDED.fact_kind,
                         fact_type = EXCLUDED.fact_type,
                         dimension = EXCLUDED.dimension,
@@ -92,10 +91,11 @@ class PostgresIntelStore:
                         observed_at = EXCLUDED.observed_at,
                         importance_score = EXCLUDED.importance_score,
                         confidence_score = EXCLUDED.confidence_score,
-                        source_reliability = EXCLUDED.source_reliability,
                         extraction_method = EXCLUDED.extraction_method,
                         extraction_version = EXCLUDED.extraction_version,
-                        dedupe_key = EXCLUDED.dedupe_key,
+                        assertion_key = EXCLUDED.assertion_key,
+                        verification_status = EXCLUDED.verification_status,
+                        verification_reason = EXCLUDED.verification_reason,
                         status = EXCLUDED.status,
                         created_by = EXCLUDED.created_by,
                         updated_at = NOW()
@@ -103,7 +103,6 @@ class PostgresIntelStore:
                     """,
                     (
                         fact.id,
-                        fact.source_document_id,
                         _enum_value(fact.fact_kind),
                         _enum_value(fact.fact_type),
                         _enum_value(fact.dimension),
@@ -116,10 +115,11 @@ class PostgresIntelStore:
                         fact.observed_at or now,
                         fact.importance_score,
                         fact.confidence_score,
-                        fact.source_reliability,
                         fact.extraction_method,
                         fact.extraction_version,
-                        fact.dedupe_key,
+                        fact.assertion_key,
+                        _enum_value(fact.verification_status),
+                        fact.verification_reason,
                         _enum_value(fact.status),
                         fact.created_by,
                         fact.created_at or now,
@@ -152,7 +152,7 @@ class PostgresIntelStore:
         conditions: list[str] = []
         params: list[Any] = []
 
-        for key in ("fact_type", "dimension", "status", "source_document_id", "dedupe_key"):
+        for key in ("fact_type", "dimension", "status", "assertion_key"):
             if filters.get(key):
                 conditions.append(f"{key} = %s")
                 params.append(filters[key])
@@ -326,9 +326,12 @@ class PostgresIntelStore:
                     INSERT INTO evidence_refs (
                         id, owner_type, owner_id, source_document_id, parent_chunk_id,
                         url, title, snippet, quote_hash, evidence_type,
-                        relevance_score, created_at
+                        relevance_score, document_version_id, source_occurrence_id,
+                        role, stance, source_tier, source_kind, role_overridden,
+                        override_reason, override_actor, created_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         owner_type = EXCLUDED.owner_type,
                         owner_id = EXCLUDED.owner_id,
@@ -339,7 +342,16 @@ class PostgresIntelStore:
                         snippet = EXCLUDED.snippet,
                         quote_hash = EXCLUDED.quote_hash,
                         evidence_type = EXCLUDED.evidence_type,
-                        relevance_score = EXCLUDED.relevance_score
+                        relevance_score = EXCLUDED.relevance_score,
+                        document_version_id = EXCLUDED.document_version_id,
+                        source_occurrence_id = EXCLUDED.source_occurrence_id,
+                        role = EXCLUDED.role,
+                        stance = EXCLUDED.stance,
+                        source_tier = EXCLUDED.source_tier,
+                        source_kind = EXCLUDED.source_kind,
+                        role_overridden = EXCLUDED.role_overridden,
+                        override_reason = EXCLUDED.override_reason,
+                        override_actor = EXCLUDED.override_actor
                     RETURNING *
                     """,
                     (
@@ -354,6 +366,15 @@ class PostgresIntelStore:
                         evidence.quote_hash,
                         _enum_value(evidence.evidence_type),
                         evidence.relevance_score,
+                        evidence.document_version_id,
+                        evidence.source_occurrence_id,
+                        _enum_value(evidence.role),
+                        _enum_value(evidence.stance),
+                        evidence.source_tier,
+                        evidence.source_kind,
+                        evidence.role_overridden,
+                        evidence.override_reason,
+                        evidence.override_actor,
                         evidence.created_at or now,
                     ),
                 )
@@ -413,7 +434,6 @@ class PostgresIntelStore:
     def _row_to_fact(row) -> IntelFact:
         return IntelFact(
             id=row["id"],
-            source_document_id=str(row["source_document_id"]),
             fact_kind=_safe_enum(FactKind, row["fact_kind"], FactKind.FACT),
             fact_type=_safe_enum(FactType, row["fact_type"], FactType.GENERAL),
             dimension=_safe_enum(
@@ -428,10 +448,11 @@ class PostgresIntelStore:
             observed_at=row["observed_at"],
             importance_score=float(row["importance_score"] or 0.0),
             confidence_score=float(row["confidence_score"] or 0.0),
-            source_reliability=float(row["source_reliability"] or 0.0),
+            verification_status=row.get("verification_status", "unverified"),
             extraction_method=row["extraction_method"] or "llm",
             extraction_version=row["extraction_version"] or "",
-            dedupe_key=row["dedupe_key"] or "",
+            assertion_key=row["assertion_key"] or "",
+            verification_reason=row.get("verification_reason", ""),
             status=_safe_enum(FactStatus, row["status"], FactStatus.DRAFT),
             created_by=row["created_by"] or "system",
             created_at=row["created_at"],
@@ -451,6 +472,8 @@ class PostgresIntelStore:
             source_document_id=str(row["source_document_id"])
             if row["source_document_id"]
             else None,
+            document_version_id=row.get("document_version_id"),
+            source_occurrence_id=row.get("source_occurrence_id"),
             parent_chunk_id=row["parent_chunk_id"],
             url=row["url"] or "",
             title=row["title"] or "",
@@ -460,5 +483,12 @@ class PostgresIntelStore:
                 EvidenceType, row["evidence_type"], EvidenceType.SOURCE_CHUNK
             ),
             relevance_score=float(row["relevance_score"] or 0.0),
+            role=row.get("role", "unknown"),
+            stance=row.get("stance", "supports"),
+            source_tier=row.get("source_tier", "unknown"),
+            source_kind=row.get("source_kind", "other"),
+            role_overridden=bool(row.get("role_overridden", False)),
+            override_reason=row.get("override_reason", ""),
+            override_actor=row.get("override_actor", ""),
             created_at=row["created_at"],
         )

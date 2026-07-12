@@ -86,7 +86,7 @@ class ConfigManager:
 
         self._config: AppConfig = AppConfig()
         self._version: int = 0
-        self._component_lock = threading.Lock()
+        self._component_lock = threading.RLock()
 
         # 缓存的基础设施组件实例
         self._agent_session_store: Any = None

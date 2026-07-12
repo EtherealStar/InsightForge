@@ -13,6 +13,12 @@ from core.retry import with_retry
 logger = structlog.get_logger(__name__)
 
 
+def _http_client_without_env():
+    import httpx
+
+    return httpx.Client(trust_env=False)
+
+
 def parse_json_object_response(response: str, schema_name: str = "json_object") -> dict[str, Any]:
     """Parse a model response that must contain a single JSON object."""
     text = (response or "").strip()
@@ -69,6 +75,7 @@ class _OpenAIChatStructuredExtractionClient:
         kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
+        kwargs["http_client"] = _http_client_without_env()
         self.client = openai.OpenAI(**kwargs)
         self.model = model
         self.max_tokens = max_tokens

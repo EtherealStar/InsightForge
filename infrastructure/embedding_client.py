@@ -10,6 +10,12 @@ logger = structlog.get_logger(__name__)
 _BATCH_SIZE = 50
 
 
+def _http_client_without_env():
+    import httpx
+
+    return httpx.Client(trust_env=False)
+
+
 class OpenAICompatibleEmbeddingClient:
     """实现 EmbeddingClientProtocol，调用 OpenAI 格式自定义 Embedding API"""
 
@@ -22,7 +28,11 @@ class OpenAICompatibleEmbeddingClient:
     ):
         import openai
 
-        self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
+        self.client = openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=_http_client_without_env(),
+        )
         self.model = model
         self.dimensions = dimensions if dimensions and dimensions > 0 else None
 

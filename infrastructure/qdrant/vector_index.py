@@ -28,7 +28,11 @@ class QdrantVectorIndex:
         self.vector_size = vector_size
         self.distance = distance
         try:
-            self.client = QdrantClient(url=url, api_key=api_key or None)
+            self.client = QdrantClient(
+                url=url,
+                api_key=api_key or None,
+                trust_env=False,
+            )
         except Exception as e:
             raise InfrastructureError(f"Qdrant client initialization failed: {e}") from e
 

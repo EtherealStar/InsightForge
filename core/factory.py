@@ -134,6 +134,37 @@ def create_document_store(config: AppConfig) -> DocumentStoreProtocol:
     return PostgresDocumentStore(dsn=config.pg_dsn)
 
 
+def create_source_profile_store(config: AppConfig):
+    from infrastructure.source_profile_store import PostgresSourceProfileStore
+    return PostgresSourceProfileStore(dsn=config.pg_dsn)
+
+
+def create_document_dedup_store(config: AppConfig):
+    from infrastructure.document_dedup_store import PostgresDocumentDedupStore
+
+    return PostgresDocumentDedupStore(dsn=config.pg_dsn)
+
+
+def create_dedup_cache(config: AppConfig):
+    from infrastructure.redis.dedup_cache import RedisDedupCache
+
+    return RedisDedupCache(redis_url=config.celery_broker_url)
+
+
+def create_document_clustering_service(config: AppConfig):
+    from services.document_clustering_service import DocumentClusteringService
+
+    return DocumentClusteringService(
+        create_document_dedup_store(config),
+        create_dedup_cache(config),
+    )
+
+
+def create_source_governance_service(config: AppConfig, mgr):
+    from services.source_governance_service import SourceGovernanceService
+    return SourceGovernanceService(mgr.source_profile_store)
+
+
 def create_qdrant_vector_index(config: AppConfig) -> VectorIndexProtocol:
     from infrastructure.qdrant.vector_index import QdrantVectorIndex
 

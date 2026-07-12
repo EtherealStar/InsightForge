@@ -45,7 +45,7 @@ services:
     platform: linux/amd64
     container_name: logos-qdrant
     ports:
-      - "16333:6333"
+      - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped

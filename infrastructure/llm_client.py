@@ -8,13 +8,23 @@ from core.exceptions import LLMError, RateLimitError
 logger = structlog.get_logger(__name__)
 
 
+def _http_client_without_env():
+    import httpx
+
+    return httpx.Client(trust_env=False)
+
+
 class OpenAICompatibleClient:
     """OpenAI 格式自定义 API（默认后端）"""
 
     def __init__(self, api_key: str, base_url: str, model: str):
         import openai
 
-        self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
+        self.client = openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=_http_client_without_env(),
+        )
         self.model = model
 
     @with_retry(max_retries=2)
@@ -82,7 +92,10 @@ class OpenAIClient:
     def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
         import openai
 
-        self.client = openai.OpenAI(api_key=api_key)
+        self.client = openai.OpenAI(
+            api_key=api_key,
+            http_client=_http_client_without_env(),
+        )
         self.model = model
 
     @with_retry(max_retries=2)

@@ -140,6 +140,11 @@ class AppConfig(BaseSettings):
     report_quality_min_score: float = 0.75
     report_quality_auto_publish: bool = False
 
+    # 来源治理发布开关：关闭时不改变现有部署行为，开启后准入先于索引。
+    source_governance_enabled: bool = False
+    dedup_shadow_enabled: bool = False
+    dedup_auto_cluster_enabled: bool = False
+
     @field_validator("llm_api_key", "embedding_api_key")
     @classmethod
     def warn_empty_key(cls, v, info):
