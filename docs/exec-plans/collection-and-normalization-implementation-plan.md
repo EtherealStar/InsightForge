@@ -170,7 +170,7 @@ PostgreSQL 迁移前备份并通过 `migrations/apply_migrations.py` 执行。ar
     static fetch success: 未执行
     browser fallback: 未执行
     redis rebuild: 未执行
-    recovery drill: 未执行；`docker info` 在 24.1s 后超时，本机 Docker daemon 不可用
+    recovery drill: 未执行
 
 变更说明（2026-07-13）：执行 Milestone 1-5 的基础切片并更新真实进度；未通过基础设施验收的项目保持未完成，避免把代码骨架误记为可观察的生产结果。
 
