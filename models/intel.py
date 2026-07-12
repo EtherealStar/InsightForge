@@ -51,6 +51,13 @@ class FactStatus(str, Enum):
     ARCHIVED = "archived"
 
 
+class VerificationStatus(str, Enum):
+    UNVERIFIED = "unverified"
+    SELF_REPORTED = "self_reported"
+    CORROBORATED = "corroborated"
+    DISPUTED = "disputed"
+
+
 @dataclass
 class IntelFactCompetitorLink:
     fact_id: str
@@ -71,7 +78,6 @@ class IntelFactProductLink:
 
 @dataclass
 class IntelFact:
-    source_document_id: str
     fact_kind: FactKind | str = FactKind.FACT
     fact_type: FactType | str = FactType.GENERAL
     dimension: IntelDimension | str = IntelDimension.GENERAL
@@ -84,10 +90,11 @@ class IntelFact:
     observed_at: datetime | None = None
     importance_score: float = 0.0
     confidence_score: float = 0.0
-    source_reliability: float = 0.0
     extraction_method: str = "llm"
     extraction_version: str = ""
-    dedupe_key: str = ""
+    assertion_key: str = ""
+    verification_status: VerificationStatus | str = VerificationStatus.UNVERIFIED
+    verification_reason: str = ""
     status: FactStatus | str = FactStatus.DRAFT
     created_by: str = "system"
     id: str = field(default_factory=new_fact_id)
