@@ -82,7 +82,6 @@ def test_list_facts_passes_filters(monkeypatch):
             ("fact_type", "feature_release"),
             ("dimension", "product"),
             ("status", "draft"),
-            ("source_document_id", "doc1"),
             ("competitor_ids", "1"),
             ("competitor_ids", "2"),
             ("product_id", "9"),
@@ -102,7 +101,6 @@ def test_list_facts_passes_filters(monkeypatch):
             "fact_type": "feature_release",
             "dimension": "product",
             "status": "draft",
-            "source_document_id": "doc1",
             "competitor_ids": [1, 2],
             "product_id": 9,
             "date_from": "2026-01-01",
@@ -135,7 +133,6 @@ def test_create_fact_forces_draft(monkeypatch):
     resp = client.post(
         "/api/intel/facts",
         json={
-            "source_document_id": "doc1",
             "subject": "Cursor",
             "predicate": "released",
             "object": "Composer",
@@ -158,7 +155,6 @@ def test_create_fact_rejects_active_status(monkeypatch):
     resp = client.post(
         "/api/intel/facts",
         json={
-            "source_document_id": "doc1",
             "subject": "Cursor",
             "predicate": "released",
             "fact_text": "Cursor released Composer.",

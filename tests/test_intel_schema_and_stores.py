@@ -158,7 +158,7 @@ def test_intel_store_crud_filters_links_and_evidence(test_dsn):
             fact_text="Cursor released a feature.",
             event_date=date(2026, 5, 1),
             confidence_score=0.9,
-            dedupe_key="cursor:released:feature",
+            assertion_key="cursor:released:feature",
         )
     )
     store.link_fact_to_competitor(fact.id, competitor.id)

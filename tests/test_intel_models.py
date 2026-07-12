@@ -14,7 +14,6 @@ from models.report import SourceRef
 
 def test_intel_fact_models_are_pure_dataclasses():
     fact = IntelFact(
-        source_document_id="11111111-1111-1111-1111-111111111111",
         fact_kind=FactKind.EVENT,
         fact_type=FactType.FEATURE_RELEASE,
         dimension=IntelDimension.PRODUCT,
@@ -31,6 +30,7 @@ def test_intel_fact_models_are_pure_dataclasses():
     assert fact.competitor_ids == []
     assert FactType.PRICING_CHANGE.value == "pricing_change"
     assert IntelDimension.GO_TO_MARKET.value == "go_to_market"
+    assert "source_document_id" not in {field.name for field in fields(IntelFact)}
 
 
 def test_evidence_and_claim_models_defaults():

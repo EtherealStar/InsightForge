@@ -64,7 +64,7 @@ class FakeIntelStore:
     def list_facts(self, filters=None, limit=50, offset=0):
         filters = filters or {}
         facts = list(self.facts.values())
-        for key in ("source_document_id", "dedupe_key", "fact_type", "dimension", "status"):
+        for key in ("assertion_key", "fact_type", "dimension", "status"):
             if filters.get(key):
                 facts = [
                     f
@@ -215,7 +215,6 @@ def test_intel_service_rejects_active_fact_without_evidence():
     with pytest.raises(ValueError, match="requires at least one evidence"):
         service.create_fact(
             {
-                "source_document_id": "11111111-1111-1111-1111-111111111111",
                 "subject": "Cursor",
                 "predicate": "released",
                 "object": "Composer",
@@ -224,6 +223,26 @@ def test_intel_service_rejects_active_fact_without_evidence():
                 "status": "active",
             }
         )
+
+
+def test_intel_service_preserves_verification_explanation():
+    service, _, _, _ = _intel_service()
+
+    fact = service.create_fact(
+        {
+            "subject": "Cursor",
+            "predicate": "announced",
+            "fact_text": "Cursor announced a pricing change.",
+            "verification_status": "self_reported",
+            "verification_reason": "仅有厂商公告",
+            "evidence": [{"url": "https://cursor.com/blog/pricing", "evidence_type": "url"}],
+        }
+    )
+
+    detail = service.get_fact_detail(fact.id)
+    # 验证状态由已保存证据确定，不能信任抽取器提交的状态。
+    assert detail["verification_status"] == "unverified"
+    assert detail["verification_reason"] == "尚无足够独立证据"
 
 
 def test_extract_facts_uses_structured_client_and_dedupes_with_cache():
@@ -323,7 +342,6 @@ def test_competitor_service_fact_profile_uses_fact_store():
     intel_store = FakeIntelStore()
     fact = intel_store.save_fact(
         IntelFact(
-            source_document_id="11111111-1111-1111-1111-111111111111",
             subject="Cursor",
             predicate="released",
             object="Composer",
@@ -343,7 +361,6 @@ def test_competitor_service_timeline_keeps_events_and_dated_facts():
     intel_store = FakeIntelStore()
     dated_fact = intel_store.save_fact(
         IntelFact(
-            source_document_id="11111111-1111-1111-1111-111111111111",
             fact_kind="fact",
             subject="Cursor",
             predicate="released",
@@ -354,7 +371,6 @@ def test_competitor_service_timeline_keeps_events_and_dated_facts():
     )
     event_fact = intel_store.save_fact(
         IntelFact(
-            source_document_id="11111111-1111-1111-1111-111111111111",
             fact_kind="event",
             subject="Cursor",
             predicate="launched",
@@ -364,7 +380,6 @@ def test_competitor_service_timeline_keeps_events_and_dated_facts():
     )
     plain_fact = intel_store.save_fact(
         IntelFact(
-            source_document_id="11111111-1111-1111-1111-111111111111",
             fact_kind="fact",
             subject="Cursor",
             predicate="mentioned",

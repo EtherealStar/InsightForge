@@ -26,7 +26,6 @@ class FakeCompetitorService:
         self.products = [CompetitorProduct(id=10, competitor_id=1, name="Composer")]
         self.fact = IntelFact(
             id="f1",
-            source_document_id="doc1",
             fact_kind=FactKind.FACT,
             fact_type="feature_release",
             dimension="product",
@@ -41,7 +40,6 @@ class FakeCompetitorService:
         )
         self.signal = IntelFact(
             id="f2",
-            source_document_id="doc1",
             fact_kind=FactKind.FACT,
             subject="Cursor",
             predicate="mentioned",
@@ -82,7 +80,6 @@ class FakeCompetitorService:
             return None
         event_fact = IntelFact(
             id="f3",
-            source_document_id="doc1",
             fact_kind=FactKind.EVENT,
             subject="Cursor",
             predicate="launched",
