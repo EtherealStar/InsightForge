@@ -134,6 +134,14 @@ export const intelApi = {
   runPipeline: () => api.post('/intel/pipeline'),
 }
 
+// ========== 来源治理 ==========
+export const governanceApi = {
+  listSources: (tier?: string) => api.get('/governance/sources', { params: tier ? { tier } : undefined }),
+  listPending: () => api.get('/governance/sources/pending'),
+  listRevisions: (profileId: string) => api.get(`/governance/sources/${profileId}/revisions`),
+  saveSource: (domain: string, data: any) => api.put(`/governance/sources/${domain}`, data),
+}
+
 // ========== Webhook 推送 ==========
 export const webhookApi = {
   getPlatforms: () => api.get('/webhook/platforms'),

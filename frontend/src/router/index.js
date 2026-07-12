@@ -24,6 +24,12 @@ const routes = [
     meta: { title: '结构化情报', icon: 'intel' },
   },
   {
+    path: '/governance',
+    name: 'Governance',
+    component: () => import('../views/GovernanceView.vue'),
+    meta: { title: '来源治理', icon: 'settings' },
+  },
+  {
     path: '/reports',
     name: 'Reports',
     component: () => import('../views/ReportView.vue'),

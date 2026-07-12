@@ -53,6 +53,7 @@ const navItems = [
   { path: '/dashboard', icon: 'dashboard', label: '工作台', role: 'viewer' },
   { path: '/competitors', icon: 'competitor', label: '竞品管理', role: 'viewer' },
   { path: '/intel', icon: 'intel', label: '结构化情报', role: 'viewer' },
+  { path: '/governance', icon: 'settings', label: '来源治理', role: 'viewer' },
   { path: '/reports', icon: 'report', label: '分析报告', role: 'viewer' },
   { path: '/tasks', icon: 'task', label: '任务追踪', role: 'viewer' },
   { path: '/query', icon: 'search', label: '智能分析', role: 'analyst' },
