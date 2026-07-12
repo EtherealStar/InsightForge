@@ -329,12 +329,18 @@ class IntelService:
         owner_id: str,
         evidence_data: dict,
     ) -> EvidenceRef:
-        evidence = EvidenceRef(
-            owner_type=owner_type,
-            owner_id=owner_id,
+        context = self.intel_store.resolve_evidence_context(
             source_document_id=evidence_data.get("source_document_id"),
             document_version_id=evidence_data.get("document_version_id"),
             source_occurrence_id=evidence_data.get("source_occurrence_id"),
+            url=evidence_data.get("url", ""),
+        )
+        evidence = EvidenceRef(
+            owner_type=owner_type,
+            owner_id=owner_id,
+            source_document_id=context["source_document_id"],
+            document_version_id=context["document_version_id"],
+            source_occurrence_id=context["source_occurrence_id"],
             parent_chunk_id=evidence_data.get("parent_chunk_id"),
             url=evidence_data.get("url", ""),
             title=evidence_data.get("title", ""),
@@ -344,11 +350,8 @@ class IntelService:
             relevance_score=_safe_float(evidence_data.get("relevance_score"), 1.0),
             role=evidence_data.get("role", EvidenceRole.UNKNOWN),
             stance=evidence_data.get("stance", EvidenceStance.SUPPORTS),
-            source_tier=evidence_data.get("source_tier", "unknown"),
-            source_kind=evidence_data.get("source_kind", "other"),
-            role_overridden=bool(evidence_data.get("role_overridden", False)),
-            override_reason=evidence_data.get("override_reason", ""),
-            override_actor=evidence_data.get("override_actor", ""),
+            source_tier=context["source_tier"],
+            source_kind=context["source_kind"],
         )
         self._validate_evidence(evidence)
         if owner_type != EvidenceOwnerType.INTEL_FACT.value:

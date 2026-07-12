@@ -33,6 +33,7 @@ def _service(
     intel_service=None,
     competitor_service=None,
     document_clustering_service=None,
+    document_version_service=None,
 ):
     if document_clustering_service is None:
         document_clustering_service = MagicMock()
@@ -42,6 +43,12 @@ def _service(
             return DedupCommitResult(occurrence, DedupDecision.NEW_CLUSTER, True, True)
 
         document_clustering_service.commit.side_effect = commit
+    if document_version_service is None:
+        document_version_service = MagicMock()
+        document_version_service.begin.side_effect = lambda document_id, content, content_hash: MagicMock(
+            id=f"version-{document_id}", document_id=document_id, content=content,
+            content_hash=content_hash, status="building"
+        )
     return PipelineService(
         collector=collector or MagicMock(),
         document_store=document_store or MagicMock(),
@@ -52,6 +59,7 @@ def _service(
         intel_service=intel_service,
         competitor_service=competitor_service,
         document_clustering_service=document_clustering_service,
+        document_version_service=document_version_service,
     )
 
 

@@ -419,7 +419,7 @@ class ChunkingService:
             content = rc["content"]
             children.append(
                 ChildChunkPoint(
-                    point_id=self._point_id(document.document_id, i),
+                    point_id=self._point_id(self._derivation_key(document), i),
                     document_id=document.document_id,
                     parent_chunk_id="",  # 稍后回填
                     content=content,
@@ -646,7 +646,7 @@ class ChunkingService:
             parent_content = "\n\n".join(c.content for c in children)
             return [
                 ParentDocumentChunk(
-                    parent_chunk_id=f"{document.document_id}:p0",
+                    parent_chunk_id=f"{self._derivation_key(document)}:p0",
                     document_id=document.document_id,
                     content=parent_content,
                     token_count=self._count_tokens(parent_content),
@@ -687,7 +687,7 @@ class ChunkingService:
             # 组装父 chunk
             parent_content = "\n\n".join(c.content for c in group)
             parent = ParentDocumentChunk(
-                parent_chunk_id=f"{document.document_id}:p{parent_idx}",
+                parent_chunk_id=f"{self._derivation_key(document)}:p{parent_idx}",
                 document_id=document.document_id,
                 content=parent_content,
                 token_count=self._count_tokens(parent_content),
@@ -817,6 +817,12 @@ class ChunkingService:
     def _point_id(document_id: str, chunk_index: int) -> str:
         """Return a stable Qdrant-compatible UUID point id."""
         return str(uuid5(NAMESPACE_URL, f"{document_id}:c:{chunk_index}"))
+
+    @staticmethod
+    def _derivation_key(document: SourceDocument) -> str:
+        # 派生对象必须绑定具体版本；否则 Canonical 晋升会覆盖仍在服务的 active 数据。
+        version_id = document.metadata.get("document_version_id")
+        return f"{document.document_id}:v:{version_id}" if version_id else document.document_id
 
 
 def _normalize_path_text(text: str) -> str:

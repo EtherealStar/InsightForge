@@ -160,9 +160,24 @@ def create_document_clustering_service(config: AppConfig):
     )
 
 
-def create_source_governance_service(config: AppConfig, mgr):
+def create_document_version_service(config: AppConfig):
+    from services.document_version_service import DocumentVersionService
+
+    return DocumentVersionService(create_document_dedup_store(config))
+
+
+def create_dedup_maintenance_service(config: AppConfig):
+    from services.dedup_maintenance_service import DedupMaintenanceService
+
+    return DedupMaintenanceService(
+        create_document_dedup_store(config),
+        create_dedup_cache(config),
+    )
+
+
+def create_source_governance_service(config: AppConfig):
     from services.source_governance_service import SourceGovernanceService
-    return SourceGovernanceService(mgr.source_profile_store)
+    return SourceGovernanceService(create_source_profile_store(config))
 
 
 def create_qdrant_vector_index(config: AppConfig) -> VectorIndexProtocol:

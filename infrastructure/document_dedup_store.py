@@ -17,6 +17,7 @@ from models.document_governance import (
     SimHashFingerprint,
     SourceOccurrence,
 )
+from services.document_fingerprint_service import hamming_distance, shingle_similarity
 
 
 def advisory_lock_keys(fingerprint: SimHashFingerprint) -> list[int]:
@@ -76,19 +77,91 @@ class PostgresDocumentDedupStore:
                 (occurrence.content_hash,),
             )
             exact = cur.fetchone()
-            document_id = str(exact["document_id"]) if exact else (occurrence.document_id or str(uuid4()))
-            created_cluster = exact is None
+            matched = exact
+            assessment = None
+            if not exact:
+                matched, assessment = self._find_near_duplicate(cur, occurrence)
+            auto_duplicate = exact is not None or (assessment and assessment[0] is DedupDecision.DUPLICATE)
+            document_id = str(matched["document_id"]) if auto_duplicate else (occurrence.document_id or str(uuid4()))
+            created_cluster = not auto_duplicate
             if created_cluster:
                 cur.execute("INSERT INTO document_clusters (id) VALUES (%s)", (document_id,))
             saved = replace(occurrence, document_id=document_id)
             self._insert_occurrence(cur, saved)
             decision = DedupDecision.NEW_CLUSTER if created_cluster else DedupDecision.DUPLICATE
+            promoted = False
+            if created_cluster:
+                cur.execute(
+                    "UPDATE document_clusters SET canonical_occurrence_id=%s WHERE id=%s",
+                    (saved.id, document_id),
+                )
+            elif auto_duplicate and self._should_promote(cur, saved):
+                cur.execute(
+                    "UPDATE document_clusters SET canonical_occurrence_id=%s WHERE id=%s",
+                    (saved.id, document_id),
+                )
+                decision = DedupDecision.CANONICAL_PROMOTED
+                promoted = True
+            if assessment and assessment[0] is DedupDecision.REVIEW_REQUIRED:
+                decision = DedupDecision.REVIEW_REQUIRED
+                self._insert_candidate(cur, saved.id, str(matched["id"]), assessment)
             return DedupCommitResult(
                 saved,
                 decision,
                 created_cluster,
-                created_cluster or self._requires_build(cur, document_id),
+                promoted or created_cluster or self._requires_build(cur, document_id),
             )
+
+    @staticmethod
+    def _should_promote(cur, incoming: SourceOccurrence) -> bool:
+        cur.execute(
+            """SELECT occurrence.source_tier, occurrence.content_length
+               FROM document_clusters cluster
+               JOIN source_occurrences occurrence ON occurrence.id=cluster.canonical_occurrence_id
+               WHERE cluster.id=%s""",
+            (incoming.document_id,),
+        )
+        current = cur.fetchone()
+        if not current:
+            return True
+        tier_rank = {"A": 4, "B": 3, "C": 2, "D": 1, "unknown": 0}
+        current_length = int(current.get("content_length") or 0)
+        complete_enough = current_length == 0 or incoming.content_length >= current_length * 0.7
+        return complete_enough and tier_rank.get(incoming.source_tier, 0) > tier_rank.get(current["source_tier"], 0)
+
+    @staticmethod
+    def _find_near_duplicate(cur, occurrence: SourceOccurrence):
+        cur.execute(
+            """SELECT * FROM source_occurrences
+               WHERE algorithm_version=%s AND (high_bands && %s OR gray_bands && %s)
+               ORDER BY observed_at, id""",
+            (occurrence.simhash.algorithm_version, list(occurrence.simhash.high_bands), list(occurrence.simhash.gray_bands)),
+        )
+        best = None
+        for row in cur.fetchall():
+            candidate_value = _from_pg_bigint(int(row["simhash"]))
+            distance = hamming_distance(occurrence.simhash.value, candidate_value)
+            if distance > 6 or len(occurrence.shingles) < 3 or len(row.get("shingles") or ()) < 3:
+                continue
+            jaccard, containment = shingle_similarity(set(occurrence.shingles), set(row["shingles"]))
+            decision = DedupDecision.DUPLICATE if jaccard >= 0.72 or containment >= 0.86 else DedupDecision.REVIEW_REQUIRED
+            score = (decision is DedupDecision.DUPLICATE, jaccard, containment, -distance)
+            if best is None or score > best[0]:
+                best = (score, row, (decision, distance, jaccard, containment))
+        return (best[1], best[2]) if best else (None, None)
+
+    @staticmethod
+    def _insert_candidate(cur, left_id: str, right_id: str, assessment) -> None:
+        decision, distance, jaccard, containment = assessment
+        left, right = sorted((left_id, right_id))
+        cur.execute(
+            """INSERT INTO duplicate_candidates
+               (id, left_occurrence_id, right_occurrence_id, hamming_distance,
+                shingle_jaccard, shingle_containment, decision, reason)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (left_occurrence_id, right_occurrence_id) DO NOTHING""",
+            (str(uuid4()), left, right, distance, jaccard, containment, decision.value, "gray_candidate_requires_review"),
+        )
 
     def commit_decision(self, decision: DuplicateCandidate) -> DuplicateCandidate:
         with self._conn() as conn, conn.cursor() as cur:
@@ -107,6 +180,44 @@ class PostgresDocumentDedupStore:
                  decision.decision.value, decision.reason),
             )
         return decision
+
+    def list_occurrences(self, *, limit: int = 1000, offset: int = 0) -> list[SourceOccurrence]:
+        """按稳定顺序枚举权威 occurrence，供可重建缓存分批恢复。"""
+        with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM source_occurrences ORDER BY observed_at, id LIMIT %s OFFSET %s",
+                (limit, offset),
+            )
+            return [self._occurrence(row) for row in cur.fetchall()]
+
+    def list_candidates(self, *, limit: int = 100, offset: int = 0) -> list[DuplicateCandidate]:
+        with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM duplicate_candidates ORDER BY created_at DESC, id LIMIT %s OFFSET %s", (limit, offset))
+            return [DuplicateCandidate(
+                left_occurrence_id=str(row["left_occurrence_id"]),
+                right_occurrence_id=str(row["right_occurrence_id"]),
+                hamming_distance=row["hamming_distance"],
+                shingle_jaccard=row["shingle_jaccard"],
+                shingle_containment=row["shingle_containment"],
+                decision=DedupDecision(row["decision"]), reason=row.get("reason", ""), id=str(row["id"]),
+            ) for row in cur.fetchall()]
+
+    def set_canonical(self, document_id: str, occurrence_id: str, *, actor: str, reason: str) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT canonical_occurrence_id FROM document_clusters WHERE id=%s FOR UPDATE", (document_id,))
+            row = cur.fetchone()
+            if not row:
+                raise KeyError(f"document cluster not found: {document_id}")
+            cur.execute("SELECT 1 FROM source_occurrences WHERE id=%s AND document_id=%s", (occurrence_id, document_id))
+            if not cur.fetchone():
+                raise ValueError("occurrence does not belong to document cluster")
+            cur.execute("UPDATE document_clusters SET canonical_occurrence_id=%s WHERE id=%s", (occurrence_id, document_id))
+            cur.execute(
+                "INSERT INTO governance_audit_log(action, entity_type, entity_id, actor, reason, before_state, after_state) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                ("promote_source", "document_cluster", document_id, actor, reason,
+                 psycopg2.extras.Json({"canonical_occurrence_id": row[0]}),
+                 psycopg2.extras.Json({"canonical_occurrence_id": occurrence_id})),
+            )
 
     def get_active_version(self, document_id: str) -> DocumentVersion | None:
         with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -174,12 +285,13 @@ class PostgresDocumentDedupStore:
             """INSERT INTO source_occurrences
                (id, document_id, url, normalized_url, title, content_hash, simhash,
                 high_bands, gray_bands, algorithm_version, source_profile_revision_id,
-                source_tier, source_kind, observed_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s,NOW()))""",
+                source_tier, source_kind, shingles, content_length, observed_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s,NOW()))""",
             (item.id, item.document_id, item.url, item.normalized_url, item.title,
              item.content_hash, _to_pg_bigint(item.simhash.value), list(item.simhash.high_bands),
              list(item.simhash.gray_bands), item.simhash.algorithm_version,
-             item.source_profile_revision_id, item.source_tier, item.source_kind, item.observed_at),
+             item.source_profile_revision_id, item.source_tier, item.source_kind,
+             list(item.shingles), item.content_length, item.observed_at),
         )
 
     @staticmethod
@@ -190,6 +302,7 @@ class PostgresDocumentDedupStore:
             simhash=SimHashFingerprint(_from_pg_bigint(int(row["simhash"])), tuple(row["high_bands"]), tuple(row["gray_bands"]), row["algorithm_version"]),
             source_profile_revision_id=row["source_profile_revision_id"], source_tier=row["source_tier"],
             source_kind=row["source_kind"], observed_at=row["observed_at"],
+            shingles=tuple(row.get("shingles") or ()), content_length=int(row.get("content_length") or 0),
         )
 
     @staticmethod

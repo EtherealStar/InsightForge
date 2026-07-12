@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from core.protocols import SourceProfileStoreProtocol
 from models.source_governance import SourceKind, SourceProfile, SourceTier
 
 
@@ -15,7 +16,7 @@ class AdmissionResult:
 
 
 class SourceGovernanceService:
-    def __init__(self, store):
+    def __init__(self, store: SourceProfileStoreProtocol):
         self.store = store
 
     @staticmethod

@@ -8,6 +8,8 @@ from core.factory import (
     create_document_clustering_service,
     create_document_ingestion_service,
     create_source_governance_service,
+    create_document_version_service,
+    create_dedup_maintenance_service,
 )
 from core.source_config import load_feeds, load_sites
 from infrastructure.collector import NewsCollector
@@ -16,6 +18,15 @@ from services.pipeline_service import PipelineService
 from services.task_run_reporter import TaskRunReporter
 
 logger = structlog.get_logger(__name__)
+
+
+@shared_task
+def rebuild_dedup_cache_task(batch_size=1000):
+    """从 PostgreSQL 权威 occurrence 全量重建 Redis 热点索引。"""
+    config = get_config_manager().config
+    result = create_dedup_maintenance_service(config).rebuild_cache(batch_size=batch_size)
+    logger.info("dedup_cache.rebuilt", **result)
+    return result
 
 @shared_task(
     bind=True,
@@ -122,8 +133,9 @@ def run_pipeline_task(self, manual=False, task_run_id=None):
             competitor_service=mgr.competitor_service,
             task_reporter=reporter,
             redis_state_store=mgr.redis_state_store,
-            source_governance_service=create_source_governance_service(config, mgr),
+            source_governance_service=create_source_governance_service(config),
             document_clustering_service=create_document_clustering_service(config),
+            document_version_service=create_document_version_service(config),
             source_governance_enabled=config.source_governance_enabled,
         )
         result = service.run()

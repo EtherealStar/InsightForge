@@ -116,6 +116,15 @@ class FakeIntelStore:
             if evidence.owner_type == owner_type and evidence.owner_id == owner_id
         ]
 
+    def resolve_evidence_context(self, **kwargs):
+        return {
+            "source_document_id": kwargs.get("source_document_id") or "cluster-1",
+            "document_version_id": kwargs.get("document_version_id") or "version-1",
+            "source_occurrence_id": kwargs.get("source_occurrence_id") or "occurrence-1",
+            "source_tier": "A",
+            "source_kind": "official",
+        }
+
     def _attach(self, fact):
         fact.competitor_ids = list(self.competitor_links.get(fact.id, []))
         fact.product_ids = list(self.product_links.get(fact.id, []))

@@ -395,6 +395,37 @@ class PostgresIntelStore:
                 rows = cur.fetchall()
         return [self._row_to_evidence(row) for row in rows]
 
+    def resolve_evidence_context(
+        self,
+        *,
+        source_document_id: str | None,
+        document_version_id: str | None,
+        source_occurrence_id: str | None,
+        url: str,
+    ) -> dict:
+        with self._conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT occurrence.document_id AS source_document_id,
+                          occurrence.id AS source_occurrence_id,
+                          occurrence.source_tier, occurrence.source_kind,
+                          cluster.active_version_id AS document_version_id
+                   FROM source_occurrences occurrence
+                   JOIN document_clusters cluster ON cluster.id = occurrence.document_id
+                   WHERE (%s IS NOT NULL AND occurrence.id = %s)
+                      OR (%s <> '' AND (occurrence.normalized_url = %s OR occurrence.url = %s))
+                      OR (%s IS NOT NULL AND occurrence.document_id = %s)
+                   ORDER BY (occurrence.id = %s) DESC, occurrence.observed_at DESC
+                   LIMIT 1""",
+                (source_occurrence_id, source_occurrence_id, url, url, url,
+                 source_document_id, source_document_id, source_occurrence_id),
+            )
+            row = cur.fetchone()
+        if not row or not row["document_version_id"]:
+            raise ValueError("evidence must resolve to an active document version and occurrence")
+        if document_version_id and document_version_id != row["document_version_id"]:
+            raise ValueError("evidence document_version_id is not the active version")
+        return dict(row)
+
     def _attach_links(self, facts: list[IntelFact]) -> None:
         if not facts:
             return

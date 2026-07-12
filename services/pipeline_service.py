@@ -52,6 +52,7 @@ class PipelineService:
         redis_state_store: RedisStateStoreProtocol | None = None,
         source_governance_service: Any | None = None,
         document_clustering_service: "DocumentClusteringService | None" = None,
+        document_version_service: Any | None = None,
         source_governance_enabled: bool = False,
     ):
         self.collector = collector
@@ -69,6 +70,8 @@ class PipelineService:
         self.redis_state_store = redis_state_store
         self.source_governance_service = source_governance_service
         self.document_clustering_service = document_clustering_service
+        self.document_version_service = document_version_service
+        self._building_versions: dict[str, Any] = {}
         self.source_governance_enabled = source_governance_enabled
 
     def run(self) -> dict:
@@ -199,6 +202,14 @@ class PipelineService:
             logger.error("[Pipeline] %s", msg)
             result["errors"].append(msg)
             self._finish_stage(stage, "failed", error={"message": msg})
+
+        # 未走到事实抽取成功路径的 building 版本统一失败，旧 active version 不受影响。
+        for version in list(self._building_versions.values()):
+            try:
+                self.document_version_service.fail(version)
+            except Exception as exc:
+                result["errors"].append(f"文档版本失败状态写入失败({version.id}): {exc}")
+        self._building_versions.clear()
 
         logger.info("[Pipeline] 完成: %s", result)
         return result
@@ -336,7 +347,13 @@ class PipelineService:
                 created += item.get("created", 0)
                 updated += item.get("updated", 0)
                 skipped += item.get("skipped", 0)
+                version = self._building_versions.pop(document_id, None)
+                if version:
+                    self.document_version_service.activate(version)
             except Exception as exc:
+                version = self._building_versions.pop(document_id, None)
+                if version:
+                    self.document_version_service.fail(version)
                 failed += 1
                 msg = f"事实抽取失败({document_id}): {exc}"
                 logger.error("[Pipeline] %s", msg)
@@ -356,21 +373,31 @@ class PipelineService:
             occurrence = self._article_to_occurrence(article)
             # 只有 PostgreSQL 已提交的权威结果可以决定是否启动昂贵的派生数据构建。
             committed = self.document_clustering_service.commit(occurrence)
-            if committed.requires_build or committed.decision is DedupDecision.NEW_CLUSTER:
-                documents.append(
-                    self._article_to_document(
+            if committed.requires_build or committed.decision in {
+                DedupDecision.NEW_CLUSTER,
+                DedupDecision.CANONICAL_PROMOTED,
+            }:
+                if not self.document_version_service:
+                    raise RuntimeError("DocumentVersionService 未配置，禁止构建无版本派生数据")
+                version = self.document_version_service.begin(
+                    committed.occurrence.document_id,
+                    article.content or "",
+                    committed.occurrence.content_hash,
+                )
+                document = self._article_to_document(
                         article,
                         document_id=committed.occurrence.document_id,
                     )
-                )
+                document.metadata["document_version_id"] = version.id
+                document.metadata["source_occurrence_id"] = committed.occurrence.id
+                self._building_versions[document.document_id] = version
+                documents.append(document)
             elif committed.decision in {DedupDecision.DUPLICATE, DedupDecision.UNCHANGED}:
                 result["duplicates"] += 1
             elif committed.decision is DedupDecision.REVIEW_REQUIRED:
                 result["duplicate_candidates"] += 1
             elif committed.decision is DedupDecision.QUARANTINED:
                 result["quarantined"] += 1
-            elif committed.decision is DedupDecision.CANONICAL_PROMOTED:
-                raise RuntimeError("canonical_promoted 必须交由 DocumentVersionService 构建")
             else:
                 raise ValueError(f"未支持的去重决定: {committed.decision}")
         return documents
@@ -378,7 +405,7 @@ class PipelineService:
     def _article_to_occurrence(self, article):
         from models.document_governance import SourceOccurrence
 
-        content_hash, simhash, _ = fingerprint(article.content or "")
+        content_hash, simhash, shingles = fingerprint(article.content or "")
         admission = getattr(article, "_source_admission", None)
         profile = admission.profile if admission else None
         return SourceOccurrence(
@@ -388,6 +415,8 @@ class PipelineService:
             title=article.title or "Untitled",
             content_hash=content_hash,
             simhash=simhash,
+            shingles=tuple(sorted(shingles)),
+            content_length=len(article.content or ""),
             source_profile_revision_id=getattr(profile, "revision_id", None),
             source_tier=getattr(getattr(profile, "tier", None), "value", "unknown"),
             source_kind=getattr(getattr(profile, "source_kind", None), "value", "other"),

@@ -199,8 +199,11 @@ class PostgresDocumentStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT * FROM document_parent_chunks
-                    WHERE parent_chunk_id = ANY(%s)
+                    SELECT pc.* FROM document_parent_chunks pc
+                    JOIN source_document_versions dv
+                      ON dv.id = (pc.metadata->>'document_version_id')
+                     AND dv.status = 'active'
+                    WHERE pc.parent_chunk_id = ANY(%s)
                     """,
                     (parent_chunk_ids,),
                 )
@@ -213,8 +216,11 @@ class PostgresDocumentStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT * FROM document_parent_chunks
-                    WHERE document_id = %s
+                    SELECT pc.* FROM document_parent_chunks pc
+                    JOIN source_document_versions dv
+                      ON dv.id = (pc.metadata->>'document_version_id')
+                     AND dv.status = 'active'
+                    WHERE pc.document_id = %s
                     ORDER BY created_at ASC, parent_chunk_id ASC
                     """,
                     (document_id,),
@@ -272,7 +278,10 @@ class PostgresDocumentStore:
                         f"""
                         SELECT pc.*, ts_rank(pc.search_vector, query) AS rank
                         FROM document_parent_chunks pc
-                        JOIN source_documents sd ON sd.id = pc.document_id,
+                        JOIN source_documents sd ON sd.id = pc.document_id
+                        JOIN source_document_versions dv
+                          ON dv.id = (pc.metadata->>'document_version_id')
+                         AND dv.status = 'active',
                              to_tsquery('simple', %s) AS query
                         WHERE {" AND ".join(where)}
                         ORDER BY rank DESC

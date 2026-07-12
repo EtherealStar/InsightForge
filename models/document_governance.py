@@ -39,6 +39,8 @@ class SourceOccurrence:
     title: str
     content_hash: str
     simhash: SimHashFingerprint
+    shingles: tuple[str, ...] = ()
+    content_length: int = 0
     source_profile_revision_id: str | None = None
     source_tier: str = "unknown"
     source_kind: str = "other"

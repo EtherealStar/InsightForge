@@ -31,11 +31,6 @@ class EvidenceRefInput(BaseModel):
     relevance_score: float = 1.0
     role: str = "unknown"
     stance: str = "supports"
-    source_tier: str = "unknown"
-    source_kind: str = "other"
-    role_overridden: bool = False
-    override_reason: str = ""
-    override_actor: str = ""
 
 
 class IntelFactCreate(BaseModel):
