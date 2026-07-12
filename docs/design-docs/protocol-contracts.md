@@ -205,6 +205,8 @@ class StructuredExtractionClientProtocol(Protocol):
 
 `IntelStoreProtocol` 是结构化事实、事实归因和证据引用的 PostgreSQL 契约。Store 不执行 DDL，不做业务状态强校验；active 状态、证据完整性和 Agent 权限由 Service 层负责。
 
+> **目标差异**：以下签名描述当前实现。ADR-0002 的目标契约将删除关联 `confidence_score`，以独立 fact-evidence 关系替代 `owner_type/owner_id`，并增加不可变激活、显式取代和保守事实解析能力。迁移目标见 [structured-intelligence-model.md](structured-intelligence-model.md)。
+
 ```python
 class IntelStoreProtocol(Protocol):
     def save_fact(self, fact: IntelFact) -> IntelFact: ...
@@ -234,6 +236,8 @@ class IntelStoreProtocol(Protocol):
 ## 11. InsightStoreProtocol
 
 `InsightStoreProtocol` 是分析结论 `InsightClaim` 的 PostgreSQL 契约。Phase 2 只提供基础 claim 持久化、查询、状态更新和证据绑定；LLM-as-Judge 与报告质量门禁属于 Phase 3。
+
+> **目标差异**：以下签名描述当前实现。目标模型不再提供 `attach_evidence`，claim 通过带真实外键的 claim-fact 关系间接溯源；supported claim 需要人工批准且语义不可原地更新。详见 [structured-intelligence-model.md](structured-intelligence-model.md)。
 
 ```python
 class InsightStoreProtocol(Protocol):
@@ -319,7 +323,7 @@ class TaskRunStoreProtocol(Protocol):
 - `task_runs` 记录任务整体输入、结果、错误、状态和时间戳。
 - `task_stages` 记录阶段级状态和阶段结果。
 - `task_events` 为 append-only 事件流，按 `created_at` 顺序用于审计和后续实时状态回放。
-- 手动 Pipeline API 使用 `task_runs.id` 作为 Celery task id；`/api/tasks/{task_id}` 通过 `get_run/list_stages/list_events` 返回 PostgreSQL 权威历史，并附带 Celery 状态。
+- 手动 Collection API 创建 Collection Run，再为各来源创建独立 Source Fetch Task；`/api/tasks/{task_id}` 仍可返回通用 PostgreSQL task run/stage/event 历史，但不得假设一次采集只对应一个 Celery task。
 
 ---
 
@@ -424,7 +428,25 @@ class ConfigAuditStoreProtocol(Protocol):
 
 ---
 
-## 19. 已移除契约
+## 19. 采集与清洗协议
+
+目标采集链路使用窄 Protocol 分离发现、获取、artifact、清洗和状态汇合：
+
+- `SourceConnectorProtocol`：根据 Source Profile 与持久化 cursor 增量发现 Fetch Candidate，不下载正文。
+- `FetchEngineProtocol`：用 HTTP 或 browser 获取单个候选并返回 FetchResult，不执行正文清洗。
+- `CollectionRunStoreProtocol`：Collection Run、Source Fetch Task、状态推进与 fan-in 查询的 PostgreSQL 契约。
+- `FetchArtifactStoreProtocol`：artifact metadata、HTTP 条件请求信息、生命周期和查询。
+- `FetchBlobStoreProtocol`：原始 body 的保存、读取、晋升和 24 小时清理。
+- `NormalizedDocumentStoreProtocol`：Normalized Document、Content Block 和规范化版本的权威存储。
+- `SourceRateLimiterProtocol`：来源级 token bucket、冷却和短期租约；Redis 实现必须可降级。
+
+Connector 与 Fetch Engine 属于 Infrastructure；Collection Orchestrator、Normalize 和 artifact 生命周期编排属于 Services。Celery task 只接受稳定 ID、调用 Service 并记录状态，不能承载 URL 规则、正文提取、归簇或保留决策。
+
+完整接口草案、状态与故障语义见 [collection-and-normalization.md](collection-and-normalization.md)。实现时新增协议必须进入 `core/protocols.py`，不得创建平行的兼容协议文件。
+
+---
+
+## 20. 已移除契约
 
 以下内容已从当前基础设施契约中移除：
 

@@ -3,6 +3,7 @@
 > **状态**：规划文档
 > **撰写日期**：2026-05-23
 > **适用范围**：在现有 ReAct Agent + Pipeline + PostgreSQL/Qdrant + Celery/Redis 架构上，把项目从 Demo+ 竞品分析助手提升为企业级市场情报与竞品分析系统。
+> **模型更新**：本文关于 IntelFact / EvidenceRef / InsightClaim 的早期字段和关系设计已由 [ADR-0002](../adr/0002-three-layer-structured-intelligence.md) 与 [结构化情报三层模型](../design-docs/structured-intelligence-model.md) 取代；其余企业能力规划仍保留。
 
 ---
 

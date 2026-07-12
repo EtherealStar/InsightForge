@@ -1,12 +1,16 @@
 # 实现来源治理、稳定文档簇与多证据验证
 
+> **结构化情报模型更新（2026-07-12）**：本文的来源档案、文档簇、来源实例、版本化正文和文档去重部分继续有效；其中唯一 assertion key、Evidence Role、业务 score、claim 直连 evidence 等结构化情报设计已由 [ADR-0002](../adr/0002-three-layer-structured-intelligence.md) 和 [结构化情报三层模型](../design-docs/structured-intelligence-model.md) 取代。当前 Progress 记录的是已实现基线，不表示三层目标迁移已经完成。
+>
+> **采集与清洗架构更新（2026-07-13）**：本文中关于 `PipelineService`、`NewsCollector`、`WebCrawler`、Markdown 内联转换、特性开关、旧链路兼容和生产 shadow 双轨的执行步骤已由 [ADR-0003](../adr/0003-source-fanout-fetch-architecture.md)、[ADR-0004](../adr/0004-versioned-deterministic-normalization.md) 和 [来源采集与内容清洗目标设计](../design-docs/collection-and-normalization.md) 取代。新实现直接删除 Crawlee 与旧全局 Pipeline，不保留 adapter、双写或旧任务状态迁移；本计划已完成的治理/归簇能力应改为消费 accepted Normalized Document。本文后续仍出现的影子去重文字只可解释为离线标注夹具校准，不得恢复旧生产采集路径。
+
 本 ExecPlan 是一份持续更新的执行文档。实施期间必须维护 `Progress`、`Surprises & Discoveries`、`Decision Log` 和 `Outcomes & Retrospective`，每次停工前都要让它们准确反映当前状态。
 
 本计划遵循仓库根目录的 `PLANS.md`。执行者只需要当前工作树和本文件即可继续工作；本文因此重复解释实现所需的领域概念、架构边界、步骤、命令和验收标准，不假定读者记得此前的设计讨论。
 
 ## Purpose / Big Picture
 
-InsightForge 现在把每个 URL 当成一篇独立知识文档。相同文章被不同网站转载时，系统会重复保存正文、分块、生成向量并抽取事实；来源可信程度则被压缩成一个无法解释的浮点数。完成本计划后，运营人员可以给信息来源分级，系统会在昂贵的向量化和大模型调用之前识别完全重复或轻度改写的转载，只为一个稳定文档簇维护一份当前生效正文。后来采集到更可信、更完整的来源时，系统能够先构建新版本，再无中断地切换主文章。
+InsightForge 现在把每个 URL 当成一篇独立知识文档。相同文章被不同网站转载时，系统会重复保存正文、分块、生成向量并抽取事实；来源可信程度则被压缩成一个无法解释的浮点数。完成本计划后，运营人员可以给信息来源分级，系统会在昂贵的向量化和大模型调用之前识别完全重复或22轻度改写的转载，只为一个稳定文档簇维护一份当前生效正文。后来采集到更可信、更完整的来源时，系统能够先构建新版本，再无中断地切换主文章。
 
 用户还可以在治理工作台查看来源审核队列、重复候选的正文差异、主文章晋升记录和证据角色冲突。一个情报事实可以由多个独立来源共同支持或反驳，并明确显示为未验证、自述、已互证或有争议，而不再依赖一个综合可信度分数。
 

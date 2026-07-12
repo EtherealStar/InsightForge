@@ -1,6 +1,24 @@
 # 架构变更历史
 
+## 2026-07 来源级采集与版本化清洗目标设计
+
+- 接受 [ADR-0003](../adr/0003-source-fanout-fetch-architecture.md)：直接删除 Crawlee 与旧全局 Pipeline，使用 Source Connector、异步 httpx、按来源 Playwright、PostgreSQL Collection Run 状态机和独立 Celery 队列。
+- Raw Fetch Artifact body 默认保留 24 小时；形成 Document Version 或 Evidence Reference 后晋升为 Retained Fetch Artifact。
+- 接受 [ADR-0004](../adr/0004-versioned-deterministic-normalization.md)：Content Block 是权威正文，Markdown 是派生表示，Normalization Outcome 只使用离散状态和原因码，不保存统一清洗分数。
+- 引入来源级自适应调度/并发、Redis 降级语义、PDF/OCR、OpenTelemetry trace、Prometheus 漏斗和单机容量基线。
+- 完整设计见 [collection-and-normalization.md](collection-and-normalization.md)，流程见 [pipeline-flow.md](../flows/pipeline-flow.md)。
+
 > 来源：从 [ARCHITECTURE.md](../../ARCHITECTURE.md) 顶部“最近架构变更”迁出的完整变更记录。
+
+---
+
+## 2026-07 结构化情报三层模型收敛
+
+- 接受 ADR-0002，将 Evidence Reference、Intel Fact 和 Insight Claim 固定为三个核心领域概念；内部关联表不增加领域层级。
+- Intel Fact 收敛为七个粗类型和渐进式 `normalized_data`，删除 event/signal 混用、重复分类和业务 score。
+- Evidence Reference 收敛为不可变原文锚点，fact-evidence stance 进入真实关系；搜索摘要和裸 URL 仅作为 Evidence Candidate。
+- supported Insight Claim 必须通过 facts 间接溯源，不直接关联 evidence；fact 和 claim 激活后均采用不可变语义与显式取代关系。
+- 目标设计见 [structured-intelligence-model.md](structured-intelligence-model.md)。当前代码、API 和数据库仍待按该设计迁移。
 
 ---
 

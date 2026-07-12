@@ -2,6 +2,8 @@
 
 Phase 2 已硬切到结构化情报模型。旧 `/api/news/*`、`/api/briefs/*`、`/api/newsapi/*` 和 `/api/competitors/{id}/intel` 不再注册；采集入口、报告入口和前端页面均使用 `intel/facts/evidence/claims/reports` 语义。
 
+> 本文记录当前已实现路由。ADR-0002 接受的三层目标模型将移除业务 score、claim 直连 evidence、JSON ID 数组和旧分类字段，并新增 fact-evidence / claim-fact 关系语义；目标 API 尚未实施，设计见 [structured-intelligence-model.md](structured-intelligence-model.md)。
+
 ## API 路由一览
 
 ### 健康检查

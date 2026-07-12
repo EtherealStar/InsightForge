@@ -23,6 +23,8 @@ venv/
 .idea/
 *.swp
 *.swo
+.claude/
+.cursor/
 
 # 前端
 frontend/node_modules/

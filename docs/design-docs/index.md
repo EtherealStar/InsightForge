@@ -14,3 +14,5 @@
 | [changelog.md](changelog.md) | 架构变更历史记录（含 RAGAs 评估框架） | ARCHITECTURE.md 顶部 |
 | [api-routes.md](api-routes.md) | API 路由表、前端页面映射、SSE 通信约定 | ARCHITECTURE.md §6 |
 | [source-governance-and-deduplication.md](source-governance-and-deduplication.md) | 来源分级、SimHash 近重复检测、主来源晋升与多证据验证目标设计 | 2026-07-12 设计讨论 |
+| [collection-and-normalization.md](collection-and-normalization.md) | 来源级扇出采集、Connector/Fetch Engine、artifact 生命周期、Content Block 清洗与 SLO | ADR-0003 / ADR-0004 |
+| [structured-intelligence-model.md](structured-intelligence-model.md) | Evidence Reference / Intel Fact / Insight Claim 三层模型、不变量、状态与关系设计 | ADR-0002 / 2026-07-12 grilling |

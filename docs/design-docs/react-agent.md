@@ -108,6 +108,8 @@ data: [DONE]
 
 内置工具通过 `ToolSpec` 定义注册表声明，由 `BuiltinToolFactory` 从 `ServiceRegistry` 解析 service 级依赖后创建。运行时 active 工具固定为上表 14 个；旧 news/article/brief 工具定义已删除，不再保留 removed placeholder，也不会进入 `ToolRegistry`。
 
+> 上表描述当前工具。按 ADR-0002，后续工具契约必须移除 `dimension` 和三层业务 score，把搜索结果视为 Evidence Candidate，并让 claim 只通过 facts 间接溯源；具体迁移目标见 [structured-intelligence-model.md](structured-intelligence-model.md)。
+
 ## 4. 工具执行流程
 
 ```
