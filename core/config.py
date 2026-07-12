@@ -145,6 +145,11 @@ class AppConfig(BaseSettings):
     dedup_shadow_enabled: bool = False
     dedup_auto_cluster_enabled: bool = False
 
+    # 三层结构化情报 v2 切流开关（Milestone 2-7）。默认关闭直到影子核对通过。
+    # 写入与读取分两阶段启用；同一业务请求不会同时写两套事实身份。
+    structured_intelligence_v2_write_enabled: bool = True
+    structured_intelligence_v2_read_enabled: bool = True
+
     @field_validator("llm_api_key", "embedding_api_key")
     @classmethod
     def warn_empty_key(cls, v, info):

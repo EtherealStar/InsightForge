@@ -102,6 +102,26 @@ def main() -> None:
     ask_parser = subparsers.add_parser("ask", help="命令行提问")
     ask_parser.add_argument("question", type=str, help="问题内容")
 
+    rebuild_parser = subparsers.add_parser(
+        "rebuild-structured-intelligence",
+        help="从 Document Version 重建三层结构化情报",
+    )
+    rebuild_parser.add_argument(
+        "--shadow", action="store_true", help="只写入目标记录，不切换读 API",
+    )
+    rebuild_parser.add_argument(
+        "--verify-only", action="store_true",
+        help="只输出核对摘要，不修改数据",
+    )
+    rebuild_parser.add_argument(
+        "--batch-size", type=int, default=50,
+        help="每次处理的 Document Version 数量",
+    )
+    rebuild_parser.add_argument(
+        "--extraction-version", default="intel_fact_v2",
+        help="extraction 版本标识，用于幂等",
+    )
+
     auth_parser = subparsers.add_parser("auth", help="认证管理")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command")
     create_key_parser = auth_subparsers.add_parser(
@@ -130,6 +150,25 @@ def main() -> None:
             cmd_pipeline(config)
         case "ask":
             cmd_ask(args.question)
+        case "rebuild-structured-intelligence":
+            from delivery.rebuild_cli import (
+                RebuildStats,
+                print_stats,
+                run_rebuild,
+                run_verify_only,
+            )
+            if args.verify_only:
+                stats = run_verify_only(config.pg_dsn)
+            else:
+                stats = RebuildStats()
+                run_rebuild(
+                    config.pg_dsn,
+                    extraction_version=args.extraction_version,
+                    shadow=args.shadow,
+                    batch_size=args.batch_size,
+                    stats=stats,
+                )
+            print_stats(stats)
         case "auth":
             if args.auth_command == "create-key":
                 cmd_create_api_key(config, args.name, args.role)

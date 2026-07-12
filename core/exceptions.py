@@ -51,3 +51,11 @@ class ConfigError(NewsAssistantError):
 
 class ToolError(NewsAssistantError):
     """工具层基础异常（详细子类见 agent/tools/errors.py）"""
+
+
+class IntelligenceInvariantError(NewsAssistantError):
+    """三层结构化情报不变量违反（locator 越界、quote 不匹配、active fact
+    不可变、supported claim 不可变、approved_by 缺失等）。
+
+    Delivery 层将其映射为 HTTP 409 Conflict。
+    """

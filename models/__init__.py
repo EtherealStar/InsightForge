@@ -22,6 +22,20 @@ from models.intel import (
     IntelDimension,
     FactStatus,
 )
+# 目标 contract: Milestone 2 引入，Milestone 7 后取代旧 dataclass。
+from models.target_intel import (
+    FactEntityRole,
+    FactEvidenceLink,
+    FactLifecycleStatus,
+    FactResolution,
+    FactResolutionOutcome,
+    IntelFactCandidate,
+    LinkReviewStatus,
+    TimePrecision,
+)
+from models.target_intel import VerificationStatus as TargetVerificationStatus
+from models.target_evidence import CharRangeLocator, EvidenceReference, EvidenceStance
+from models.target_insight import ClaimFactLink, ClaimMaturity, ClaimStance
 from models.report import (
     AnalysisReport,
     ReportClaimRef,
@@ -42,10 +56,21 @@ __all__ = [
     "ActorRole", "ApiKeyRecord", "ApiKeyStatus", "ConfigAuditLog",
     "SourceDocument", "ParentDocumentChunk",
     "ChildChunkPoint", "ChildChunkSearchResult",
+    # Legacy evidence (kept for Service / Store / API compat until Milestone 7).
     "EvidenceRef", "EvidenceOwnerType", "EvidenceType",
+    # Target evidence (Milestone 2+).
+    "CharRangeLocator", "EvidenceReference", "EvidenceStance",
+    # Legacy claim (kept for Service / Store / API compat until Milestone 7).
     "InsightClaim", "ClaimType", "ClaimStatus",
+    # Target claim (Milestone 2+).
+    "ClaimFactLink", "ClaimMaturity", "ClaimStance",
+    # Legacy Intel Fact (kept for compat).
     "IntelFact", "IntelFactCompetitorLink", "IntelFactProductLink",
     "FactKind", "FactType", "IntelDimension", "FactStatus",
+    # Target Intel Fact (Milestone 2+).
+    "FactEntityRole", "FactEvidenceLink", "FactLifecycleStatus",
+    "FactResolution", "FactResolutionOutcome", "IntelFactCandidate",
+    "LinkReviewStatus", "TimePrecision", "TargetVerificationStatus",
     "AnalysisReport", "ReportClaimRef", "ReportEvidenceRef",
     "ReportQualityIssue", "ReportQualityReview", "ReportReviewStatus",
     "ReportType", "ReportStatus",

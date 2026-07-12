@@ -29,6 +29,7 @@ from delivery.api.report_router import router as report_router
 from delivery.api.intel_router import router as intel_router
 from delivery.api.insight_router import router as insight_router
 from delivery.api.governance_router import router as governance_router
+from delivery.api.intelligence_v2_router import router as intelligence_v2_router
 
 app = FastAPI(
     title="InsightForge — AI 竞品分析助手",
@@ -89,6 +90,7 @@ app.include_router(report_router)
 app.include_router(intel_router)
 app.include_router(insight_router)
 app.include_router(governance_router)
+app.include_router(intelligence_v2_router)
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
